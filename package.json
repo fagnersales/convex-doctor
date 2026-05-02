@@ -1,0 +1,35 @@
+{
+  "name": "check-convex-validators",
+  "version": "0.1.0",
+  "description": "Static analyzer that detects ReturnsValidationError drift between Convex schema, returns validators, and handler return shapes.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "check-convex-validators": "./src/cli.ts"
+  },
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./cli": "./src/cli.ts"
+  },
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "check:self": "bun src/cli.ts --convex-dir tests/fixtures/clean/convex"
+  },
+  "dependencies": {
+    "ts-morph": "^24.0.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.1.13",
+    "typescript": "^5.6.3"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "TODO.md"
+  ],
+  "engines": {
+    "bun": ">=1.0.0"
+  }
+}
