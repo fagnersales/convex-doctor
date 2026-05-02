@@ -22,6 +22,13 @@ import type { ReturnIntent, Shape, FieldShape } from "./types.ts";
  */
 export interface AnalyzeContext {
   argsShape?: Map<string, FieldShape>;
+  /**
+   * Resolve `ctx.runQuery(internal.x.y, ...)` to the called function's
+   * returns shape. Segments are the path after `internal`/`api` —
+   * `internal.charges.queries.list` → `["charges", "queries", "list"]`.
+   * The last segment is the export name; the rest is the file path.
+   */
+  resolveRunCall?: (segments: string[]) => Shape | null;
 }
 
 type HandlerFn = ArrowFunction | FunctionExpression;
@@ -78,6 +85,7 @@ interface Scope {
   vars: Map<string, VarInfo>;
   argsShape?: Map<string, FieldShape>;
   argsParamName?: string;
+  resolveRunCall?: (segments: string[]) => Shape | null;
 }
 
 interface VarInfo {
@@ -97,7 +105,11 @@ type VarOrigin =
   | { kind: "unknown"; expr: string };
 
 function buildScope(handler: HandlerFn, ctx: AnalyzeContext): Scope {
-  const scope: Scope = { vars: new Map(), argsShape: ctx.argsShape };
+  const scope: Scope = {
+    vars: new Map(),
+    argsShape: ctx.argsShape,
+    resolveRunCall: ctx.resolveRunCall,
+  };
 
   // params: handler signature is `(ctx, args)` — second param is the args object.
   const params = handler.getParameters();
@@ -378,6 +390,14 @@ function classifyExpression(expr: Expression | Block, scope: Scope): ReturnInten
     return { kind: "unanalyzed", reason: "block expression body" };
   }
 
+  // unwrap parens, `as const`, `as T`, type assertions
+  if (Node.isParenthesizedExpression(expr)) {
+    return classifyExpression(expr.getExpression(), scope);
+  }
+  if (Node.isAsExpression(expr) || Node.isTypeAssertion(expr)) {
+    return classifyExpression(expr.getExpression(), scope);
+  }
+
   // null / undefined
   if (expr.getKind() === SyntaxKind.NullKeyword) return { kind: "null" };
   if (Node.isIdentifier(expr) && expr.getText() === "undefined") return { kind: "null" };
@@ -429,6 +449,14 @@ function classifyExpression(expr: Expression | Block, scope: Scope): ReturnInten
 
   // call (e.g. await ctx.db.get(id)): wrap as origin
   if (Node.isCallExpression(expr)) {
+    // Special: `ctx.runQuery/runMutation/runAction(internal.x.y, ...)` —
+    // resolve the called function's returns shape.
+    const ran = tryClassifyRunCall(expr, scope);
+    if (ran) return ran;
+    // Special: `Promise.all(<iterable>)` preserves the element shape.
+    // Recurse into the argument.
+    const promised = tryClassifyPromiseAll(expr, scope);
+    if (promised) return promised;
     // Special: `arr.map(callback)` — trace callback body so we don't
     // incorrectly inherit rows<T> when the callback transforms the row.
     const mapped = tryClassifyMapCall(expr, scope);
@@ -461,6 +489,7 @@ function tryClassifyMapCall(call: CallExpression, scope: Scope): ReturnIntent | 
     vars: new Map(scope.vars),
     argsShape: scope.argsShape,
     argsParamName: scope.argsParamName,
+    resolveRunCall: scope.resolveRunCall,
   };
   const receiverOrigin = inferOrigin(expr.getExpression(), scope);
   const params = arg.getParameters();
@@ -486,6 +515,58 @@ function tryClassifyMapCall(call: CallExpression, scope: Scope): ReturnIntent | 
   }
 
   return { kind: "literalArray", element: elementIntent };
+}
+
+/**
+ * Detect `ctx.runQuery(internal.x.y, ...)` etc. and resolve to the called
+ * function's returns shape via the AnalyzeContext resolver. Returns null
+ * for non-runX calls or when the target reference isn't `internal.*`/`api.*`.
+ */
+function tryClassifyRunCall(call: CallExpression, scope: Scope): ReturnIntent | null {
+  if (!scope.resolveRunCall) return null;
+  const expr = call.getExpression();
+  if (!Node.isPropertyAccessExpression(expr)) return null;
+  const method = expr.getName();
+  if (method !== "runQuery" && method !== "runMutation" && method !== "runAction") return null;
+  if (receiverText(expr.getExpression()) !== "ctx") return null;
+
+  const target = call.getArguments()[0];
+  if (!target) return null;
+  const segments = readApiSegments(target);
+  if (!segments || segments.length === 0) return null;
+
+  const shape = scope.resolveRunCall(segments);
+  if (!shape) return null;
+  return { kind: "passthrough", shape, from: segments.join(".") };
+}
+
+/**
+ * `Promise.all(<expr>)` preserves array shape — recurse into `<expr>`.
+ * Returns null for non-Promise.all calls.
+ */
+function tryClassifyPromiseAll(call: CallExpression, scope: Scope): ReturnIntent | null {
+  const expr = call.getExpression();
+  if (!Node.isPropertyAccessExpression(expr)) return null;
+  if (expr.getName() !== "all") return null;
+  const recv = expr.getExpression();
+  if (!Node.isIdentifier(recv) || recv.getText() !== "Promise") return null;
+
+  const arg = call.getArguments()[0];
+  if (!arg) return null;
+  return classifyExpression(arg as Expression, scope);
+}
+
+function readApiSegments(node: Node): string[] | null {
+  const parts: string[] = [];
+  let current: Node = node;
+  while (Node.isPropertyAccessExpression(current)) {
+    parts.unshift(current.getName());
+    current = current.getExpression();
+  }
+  if (!Node.isIdentifier(current)) return null;
+  const root = current.getText();
+  if (root !== "internal" && root !== "api") return null;
+  return parts;
 }
 
 function elementOriginOf(o: VarOrigin): VarOrigin | null {

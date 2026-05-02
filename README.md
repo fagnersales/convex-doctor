@@ -76,7 +76,10 @@ process.exit(exitCode(result, false));
 
 ## Status
 
-v0.1.0 — covers the high-frequency drift patterns. See `TODO.md` for known gaps and roadmap.
+v0.2.0 — high-frequency drift patterns + R4 recursive type compare,
+discriminated-union scoring, both-branch ternary, `.map`/`Promise.all`
+tracing, and `ctx.runQuery/runMutation/runAction` cross-fn propagation.
+See `TODO.md` for known gaps and roadmap.
 
 ## License
 

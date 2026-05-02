@@ -53,16 +53,67 @@ export function run(opts: RunOptions): RunResult {
   const allIssues: Issue[] = [];
   let scanned = 0;
 
+  // Pass 1: collect function metadata (returns shapes, args shapes, handler nodes).
+  // We need this before pass 2 so that handler analysis can resolve cross-file
+  // `ctx.runQuery(internal.x.y, ...)` targets.
+  const pending: Pending[] = [];
+  const returnsByPath = new Map<string, Shape>(); // "<relpath>:<exportName>" → shape
+
   for (const sf of project.getSourceFiles()) {
     if (sf.getFilePath() === schemaFile.getFilePath()) continue;
-    const fns = collectFunctions(sf, project);
-    scanned += fns.length;
-    for (const fn of fns) {
-      allIssues.push(...matchFunction(fn, schema));
+    for (const p of collectPending(sf, project)) {
+      pending.push(p);
+      if (p.returnsValidator) {
+        const key = pendingKey(convexDir, p.sf.getFilePath(), p.decl.getName());
+        returnsByPath.set(key, p.returnsValidator);
+      }
     }
   }
 
+  // Pass 2: classify handlers with the run-call resolver wired up.
+  const resolveRunCall = (segments: string[]): Shape | null => {
+    if (segments.length < 1) return null;
+    const exportName = segments[segments.length - 1]!;
+    const relPath = segments.slice(0, -1).join("/");
+    // try `<relPath>` (file) or fall back to `<relPath>/index`
+    for (const candidate of [relPath, `${relPath}/index`]) {
+      const key = `${candidate}:${exportName}`;
+      const shape = returnsByPath.get(key);
+      if (shape) return shape;
+    }
+    return null;
+  };
+
+  for (const p of pending) {
+    if (!Node.isArrowFunction(p.handlerNode) && !Node.isFunctionExpression(p.handlerNode)) {
+      continue;
+    }
+    const intents = analyzeHandler(p.handlerNode, {
+      argsShape: p.argsShape,
+      resolveRunCall,
+    });
+    const fn: FunctionInfo = {
+      filePath: p.sf.getFilePath(),
+      line: p.decl.getStartLineNumber(),
+      exportName: p.decl.getName(),
+      kind: p.fnKind,
+      returnsValidator: p.returnsValidator,
+      returnsValidatorLine: p.returnsLine,
+      intents,
+    };
+    scanned += 1;
+    allIssues.push(...matchFunction(fn, schema));
+  }
+
   return { issues: filterIssues(allIssues, opts), scannedFunctions: scanned, schema };
+}
+
+function pendingKey(convexDir: string, filePath: string, exportName: string): string {
+  // Strip convexDir prefix and `.ts` suffix to get the relative module path.
+  const dir = convexDir.endsWith("/") ? convexDir : `${convexDir}/`;
+  let rel = filePath.startsWith(dir) ? filePath.slice(dir.length) : filePath;
+  rel = rel.replace(/\.tsx?$/, "");
+  return `${rel}:${exportName}`;
 }
 
 function filterIssues(issues: Issue[], opts: RunOptions): Issue[] {
@@ -72,8 +123,18 @@ function filterIssues(issues: Issue[], opts: RunOptions): Issue[] {
   });
 }
 
-function collectFunctions(sf: SourceFile, project: Project): FunctionInfo[] {
-  const fns: FunctionInfo[] = [];
+type Pending = {
+  sf: SourceFile;
+  decl: import("ts-morph").VariableDeclaration;
+  fnKind: FunctionInfo["kind"];
+  returnsValidator: Shape | null;
+  returnsLine: number;
+  handlerNode: Node;
+  argsShape: Map<string, import("./types.ts").FieldShape> | undefined;
+};
+
+function collectPending(sf: SourceFile, project: Project): Pending[] {
+  const out: Pending[] = [];
 
   for (const stmt of sf.getStatements()) {
     if (!Node.isVariableStatement(stmt)) continue;
@@ -95,40 +156,36 @@ function collectFunctions(sf: SourceFile, project: Project): FunctionInfo[] {
         if (!Node.isPropertyAssignment(prop)) continue;
         const name = prop.getName();
         if (name === "returns") {
-          const init = prop.getInitializer();
-          if (init) {
-            returnsValidator = resolveRef(parseValidator(init), sf, project);
+          const propInit = prop.getInitializer();
+          if (propInit) {
+            returnsValidator = resolveRef(parseValidator(propInit), sf, project);
             returnsLine = prop.getStartLineNumber();
           }
         } else if (name === "handler") {
           handlerNode = prop.getInitializer() ?? null;
         } else if (name === "args") {
-          const init = prop.getInitializer();
-          if (init) {
-            const shape = resolveRef(parseValidator(init), sf, project);
+          const propInit = prop.getInitializer();
+          if (propInit) {
+            const shape = resolveRef(parseValidator(propInit), sf, project);
             if (shape.kind === "object") argsShapeMap = shape.fields;
           }
         }
       }
 
       if (!handlerNode) continue;
-      if (!Node.isArrowFunction(handlerNode) && !Node.isFunctionExpression(handlerNode)) continue;
-
-      const intents = analyzeHandler(handlerNode, { argsShape: argsShapeMap });
-
-      fns.push({
-        filePath: sf.getFilePath(),
-        line: decl.getStartLineNumber(),
-        exportName: decl.getName(),
-        kind: fnKind,
+      out.push({
+        sf,
+        decl,
+        fnKind,
         returnsValidator,
-        returnsValidatorLine: returnsLine,
-        intents,
+        returnsLine,
+        handlerNode,
+        argsShape: argsShapeMap,
       });
     }
   }
 
-  return fns;
+  return out;
 }
 
 function getFunctionKind(call: CallExpression): FunctionInfo["kind"] | null {

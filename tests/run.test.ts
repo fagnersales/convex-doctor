@@ -166,6 +166,32 @@ describe("discriminated union (R14)", () => {
   });
 });
 
+describe("Promise.all(...)", () => {
+  test("traces through Promise.all to flag drift in the map callback", () => {
+    const { issues } = go("promise-all");
+    const extra = issues.filter((i) => i.code === "EXTRA_LITERAL_FIELD");
+    const missing = issues.filter((i) => i.code === "MISSING_LITERAL_FIELD");
+    expect(extra.some((i) => i.message.includes("url"))).toBe(true);
+    expect(missing.some((i) => i.message.includes("label"))).toBe(true);
+  });
+});
+
+describe("ctx.runQuery propagation", () => {
+  test("flags drift between caller's returns and called fn's returns", () => {
+    const { issues } = go("run-query");
+    const tm = issues.filter((i) => i.code === "TYPE_MISMATCH" && i.function === "caller");
+    expect(tm.length).toBeGreaterThan(0);
+  });
+
+  test("clean when caller's returns match called fn's returns", () => {
+    const { issues } = go("run-query");
+    const errs = issues.filter(
+      (i) => i.severity === "error" && i.function === "callerOk",
+    );
+    expect(errs).toEqual([]);
+  });
+});
+
 describe(".map(c => ({...})) bound to const (R11 bound)", () => {
   test("bound .map result is classified as literalArray, not rows<T>", () => {
     const { issues } = go("map-bound");

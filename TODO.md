@@ -20,14 +20,14 @@ Roadmap for `check-convex-validators`. Each rule maps to a class of `ReturnsVali
 | R12 | Imported validators (`returns: companyReturnValidator`) | ✅ | Local-file + relative imports + barrel re-exports (`export { x } from "./y"`). No node_modules / package imports. |
 | R13 | Union return matched to handler branches by `_id` table | ✅ | |
 | R14 | Discriminated union with multiple object branches | ✅ | Score-matches each handler literal to the branch whose literal-typed fields agree (e.g. `ok: true as const` → branch with `ok: v.literal(true)`). Falls back to keyset overlap. |
-| R15 | Indirection (helper functions, awaited helpers) | ✅ | Reported as `UNANALYZED` (info; opt-in). |
+| R15 | Indirection (helper functions, awaited helpers) | 🚧 | `ctx.runQuery / runMutation / runAction(internal.x.y, ...)` resolves the called function's `returns` and compares to the caller's. Generic helper functions (regular fn calls) still reported as `UNANALYZED`. |
 
 ## Known false-positive sources
 
 - **`Doc<"T">` aliases via `convex-helpers`:** `doc(schema, "stores")` returns the schema-derived shape but isn't recognized as `v.object(...)`. Treat known helpers (`doc`, `partial`, `pick`, `omit`) explicitly.
 - **Args resolved in middleware:** `customQuery` / `customMutation` (convex-helpers) wrap the function. Args are typed in a different builder. Not yet recognized.
-- **`ctx.runQuery` / `ctx.runMutation`:** When a handler returns the result of an internal call, we mark it `unanalyzed`. Could resolve the called function's `returns` shape and propagate.
-- **`Promise.all([...])`:** array of awaited rows. `.map(...)` chained. Trace through.
+- **`ctx.runQuery` / `ctx.runMutation` / `ctx.runAction`:** Resolved — the called fn's `returns` shape is propagated. Two-pass scan; segments after `internal`/`api` map to `<filePath>:<exportName>`.
+- **`Promise.all([...])`:** Resolved — passes through to argument's classification (most commonly `arr.map(...)`).
 - **Conditional return paths:** ternary trace now expands both branches at the return-statement level. Nested conditionals inside non-return positions still pick `whenTrue` only (rare).
 
 ## Bugs to fix
@@ -66,7 +66,8 @@ Roadmap for `check-convex-validators`. Each rule maps to a class of `ReturnsVali
 - [x] `discriminated-union` — `{ ok: true } | { ok: false, error }` discriminator scoring (R14).
 - [x] `type-mismatch` — primitive / id-table / array-element / union-member-coverage (R4).
 - [x] `ternary` — `cond ? a : b` whenFalse branch checked.
-- [ ] `runQuery` indirection.
+- [x] `runQuery` indirection.
+- [x] `Promise.all(arr.map(...))`.
 - [ ] Custom builder (`customQuery` from convex-helpers).
 
 ## Maintenance

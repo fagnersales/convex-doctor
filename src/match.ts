@@ -233,6 +233,27 @@ function matchIntentAgainstUnion(
       const innerBranches = unfoldUnion(arr.element);
       return matchIntentAgainstUnion(fn, intent.element, innerBranches, schema);
     }
+
+    case "passthrough": {
+      // Handler returns the result of `ctx.runQuery(internal.x.y, ...)` —
+      // compare the called function's returns shape against the caller's.
+      const callerShape: Shape =
+        branches.length === 1 ? branches[0]! : { kind: "union", members: branches };
+      const mismatch = compareShapes(intent.shape, callerShape);
+      if (mismatch) {
+        return [
+          {
+            severity: "error",
+            code: "TYPE_MISMATCH",
+            filePath: fn.filePath,
+            line: fn.returnsValidatorLine,
+            function: fn.exportName,
+            message: `runQuery target ${intent.from} ${mismatch}`,
+          },
+        ];
+      }
+      return [];
+    }
   }
 }
 
@@ -418,9 +439,25 @@ function compareShapes(expected: Shape, actual: Shape): string | null {
       }
       return null;
     }
-    case "object":
-      // Field-level compare happens elsewhere; structural mismatch already covered.
+    case "object": {
+      const a = actual as Extract<Shape, { kind: "object" }>;
+      // Field-by-field recursive compare. Skip synthetic spread keys.
+      for (const [k, vf] of expected.fields) {
+        if (k.startsWith("__spread:")) continue;
+        const af = a.fields.get(k);
+        if (!af) return `missing field "${k}"`;
+        if (vf.optional !== af.optional) return `field "${k}" optionality differs`;
+        const inner = compareShapes(vf.shape, af.shape);
+        if (inner) return `field "${k}" ${inner}`;
+      }
+      for (const [k] of a.fields) {
+        if (k.startsWith("__spread:")) continue;
+        if (!expected.fields.has(k)) {
+          return `unexpected field "${k}"`;
+        }
+      }
       return null;
+    }
     default:
       return null;
   }

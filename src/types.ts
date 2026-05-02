@@ -50,6 +50,9 @@ export type ReturnIntent =
   | { kind: "literalArray"; element: ReturnIntent }
   | { kind: "null" }
   | { kind: "primitive"; primitive: "string" | "number" | "boolean" }
+  /** Result of `ctx.runQuery/runMutation/runAction(internal.x.y, ...)` —
+   *  shape comes from the called function's `returns` validator. */
+  | { kind: "passthrough"; shape: Shape; from: string }
   | { kind: "unanalyzed"; reason: string };
 
 export interface FunctionInfo {
