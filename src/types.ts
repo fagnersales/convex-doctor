@@ -105,6 +105,57 @@ export interface RunOptions {
   includeUnanalyzed: boolean;
   format: "text" | "json";
   strict: boolean;
+  /** When set, also build a call graph for HTML output. */
+  buildGraph?: boolean;
+  /** Root directory to scan for callers (default: parent of convexDir). */
+  projectRoot?: string;
+  /** Glob patterns (`*` wildcard) matched against node ids. Matching
+   *  nodes are excluded from the `dead` list and rendered as ignored. */
+  ignoreDead?: string[];
+}
+
+/**
+ * Call-graph node. Each Convex function definition gets one node.
+ * `id` = `<relPathUnderConvex>:<exportName>` (e.g. `charges/queries:list`).
+ */
+export interface GraphNode {
+  id: string;
+  exportName: string;
+  filePath: string;
+  line: number;
+  kind: FunctionInfo["kind"];
+  /** Number of incoming edges. `dead` iff `incoming === 0` and !ignored. */
+  incoming: number;
+  outgoing: number;
+  /** True when id matches a `--ignore-dead` pattern — excluded from dead. */
+  ignored?: boolean;
+}
+
+/**
+ * One directed edge: caller → callee.
+ * Caller is either another Convex function node id, or a synthetic
+ * `external:<relPath>` id representing a non-Convex call site (React
+ * hook, server action, cron registration, etc.).
+ */
+export interface GraphEdge {
+  from: string;
+  to: string;
+  /** Where the reference lives — for click-to-source. */
+  filePath: string;
+  line: number;
+  /** `runQuery` / `runMutation` / `runAction` / `useQuery` / `external` / ... */
+  via: string;
+}
+
+export interface CallGraph {
+  nodes: GraphNode[];
+  /** External caller pseudo-nodes (one per file that calls into Convex). */
+  externals: { id: string; filePath: string; outgoing: number }[];
+  edges: GraphEdge[];
+  /** Node ids with zero incoming edges. */
+  dead: string[];
+  /** Files scanned for callers. */
+  scannedFiles: number;
 }
 
 export interface Timings {
@@ -127,4 +178,8 @@ export interface RunResult {
   scannedFunctions: number;
   schema: SchemaModel;
   timings: Timings;
+  /** All Convex functions discovered (one record per export). */
+  functions: FunctionInfo[];
+  /** Present only when `RunOptions.buildGraph` is true. */
+  graph?: CallGraph;
 }

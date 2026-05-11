@@ -1,10 +1,12 @@
 import { Project, Node, SyntaxKind, type SourceFile, type CallExpression } from "ts-morph";
-import { resolve as pathResolve } from "node:path";
+import { resolve as pathResolve, dirname as pathDirname } from "node:path";
 import { parseSchema } from "./schema.ts";
 import { parseValidator, resolveRef } from "./validator.ts";
 import { analyzeHandler } from "./handler.ts";
 import { matchFunction } from "./match.ts";
+import { buildGraph } from "./graph.ts";
 import type {
+  CallGraph,
   FunctionInfo,
   Issue,
   RunOptions,
@@ -59,6 +61,7 @@ export function run(opts: RunOptions): RunResult {
       scannedFunctions: 0,
       schema: { tables: new Map() },
       timings: zeroTimings(t0, tFileLoad, project.getSourceFiles().length),
+      functions: [],
     };
   }
 
@@ -132,6 +135,7 @@ export function run(opts: RunOptions): RunResult {
     return resolveByRelPath(relPath, exportName, new Set());
   };
 
+  const collected: FunctionInfo[] = [];
   for (const p of pending) {
     if (!Node.isArrowFunction(p.handlerNode) && !Node.isFunctionExpression(p.handlerNode)) {
       continue;
@@ -150,10 +154,22 @@ export function run(opts: RunOptions): RunResult {
       returnsValidatorLine: p.returnsLine,
       intents,
     };
+    collected.push(fn);
     scanned += 1;
     allIssues.push(...matchFunction(fn, schema));
   }
   const tAnalyze = performance.now();
+
+  let graph: CallGraph | undefined;
+  if (opts.buildGraph) {
+    const projectRoot = pathResolve(opts.projectRoot ?? pathDirname(convexDir));
+    graph = buildGraph({
+      convexDir,
+      projectRoot,
+      functions: collected,
+      ignoreDead: opts.ignoreDead,
+    });
+  }
 
   const timings: Timings = {
     fileLoadMs: round(tFileLoad - t0),
@@ -169,6 +185,8 @@ export function run(opts: RunOptions): RunResult {
     scannedFunctions: scanned,
     schema,
     timings,
+    graph,
+    functions: collected,
   };
 }
 

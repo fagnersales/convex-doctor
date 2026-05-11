@@ -18,7 +18,8 @@
     "check:self": "bun src/cli.ts --convex-dir tests/fixtures/clean/convex"
   },
   "dependencies": {
-    "ts-morph": "^24.0.0"
+    "ts-morph": "^24.0.0",
+    "vis-network": "^10.0.3"
   },
   "devDependencies": {
     "@types/bun": "^1.1.13",
