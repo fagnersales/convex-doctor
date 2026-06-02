@@ -91,7 +91,7 @@ Options:
   --html <path>            Also write a self-contained call-graph HTML
   --project-root <path>    Root scanned for callers when --html is set.
                            Default: parent of <convex-dir>
-  --ignore-dead <pattern>  Glob pattern (`*` wildcard) excluding nodes
+  --ignore-dead <pattern>  Glob pattern (\`*\` wildcard) excluding nodes
                            from the dead list. Repeatable.
                            Examples: 'migrations:*', '*:migrate*'
   --dead                   Print the dead-function list to stdout (one
