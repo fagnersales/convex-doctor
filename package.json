@@ -1,5 +1,5 @@
 {
-  "name": "convex-doctor",
+  "name": "@fagnersales/convex-doctor",
   "version": "0.1.0",
   "description": "Static analyzer for Convex: returns-validator drift + best-practice lints, before deploy.",
   "license": "MIT",
@@ -15,7 +15,8 @@
   "scripts": {
     "test": "bun test",
     "typecheck": "tsc --noEmit",
-    "check:self": "bun src/cli.ts --convex-dir tests/fixtures/clean/convex"
+    "check:self": "bun src/cli.ts --convex-dir tests/fixtures/clean/convex",
+    "prepublishOnly": "bun test"
   },
   "dependencies": {
     "ts-morph": "^24.0.0"
@@ -26,9 +27,27 @@
   },
   "files": [
     "src",
-    "README.md",
-    "TODO.md"
+    "README.md"
   ],
+  "keywords": [
+    "convex",
+    "static-analysis",
+    "linter",
+    "validator",
+    "returns",
+    "cli"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fagnersales/convex-doctor.git"
+  },
+  "homepage": "https://github.com/fagnersales/convex-doctor#readme",
+  "bugs": {
+    "url": "https://github.com/fagnersales/convex-doctor/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "engines": {
     "bun": ">=1.0.0"
   }

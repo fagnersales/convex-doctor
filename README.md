@@ -9,15 +9,17 @@ It walks `convex/schema.ts` + every `query | mutation | action | internal*` defi
 
 ## Quick start
 
+Published as the scoped package [`@fagnersales/convex-doctor`](https://www.npmjs.com/package/@fagnersales/convex-doctor). It runs on [Bun](https://bun.sh) (the CLI executes TypeScript directly).
+
 ```bash
 # inside any Convex project
-bunx convex-doctor
+bunx @fagnersales/convex-doctor
 
 # scan a non-default convex dir
-bunx convex-doctor --convex-dir backend/convex
+bunx @fagnersales/convex-doctor --convex-dir backend/convex
 
 # wire into your typecheck step
-"typecheck": "tsgo --noEmit && bunx convex-doctor"
+"typecheck": "tsgo --noEmit && bunx @fagnersales/convex-doctor"
 ```
 
 ## What it detects
@@ -88,7 +90,7 @@ Foreign-key joins (`ctx.db.get(row.fkId)`), enrichment spreads (`{ ...row, relat
 Optional. `--dead` builds a call graph across the project — resolving `api.*` / `internal.*` chains through barrel re-exports — and lists every Convex function no caller reaches. Use `--dead-only` to print just the list, `--ignore-dead <pattern>` to exclude known entry points (`*` wildcard, repeatable), and `--project-root <path>` to widen the caller scan beyond the parent of `--convex-dir`.
 
 ```bash
-bunx convex-doctor --convex-dir convex --dead-only --ignore-dead 'migrations:*'
+bunx @fagnersales/convex-doctor --convex-dir convex --dead-only --ignore-dead 'migrations:*'
 ```
 
 ## CLI
@@ -112,7 +114,7 @@ Exit codes: `0` no errors (and no warnings under `--strict`), `1` errors found (
 ## Programmatic API
 
 ```ts
-import { run, reportText, exitCode } from "convex-doctor";
+import { run, reportText, exitCode } from "@fagnersales/convex-doctor";
 
 const result = run({
   convexDir: "convex",
