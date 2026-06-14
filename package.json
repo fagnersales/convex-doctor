@@ -1,11 +1,11 @@
 {
-  "name": "check-convex-validators",
+  "name": "convex-doctor",
   "version": "0.1.0",
-  "description": "Static analyzer that detects ReturnsValidationError drift between Convex schema, returns validators, and handler return shapes.",
+  "description": "Static analyzer for Convex: returns-validator drift + best-practice lints, before deploy.",
   "license": "MIT",
   "type": "module",
   "bin": {
-    "check-convex-validators": "./src/cli.ts"
+    "convex-doctor": "./src/cli.ts"
   },
   "main": "./src/index.ts",
   "exports": {

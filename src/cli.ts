@@ -89,12 +89,12 @@ function parseArgs(argv: string[]): CliOptions {
 }
 
 function printHelp() {
-  process.stdout.write(`check-convex-validators
+  process.stdout.write(`convex-doctor
 
 Static analyzer for Convex: ReturnsValidationError drift + best-practice lints.
 
 Usage:
-  check-convex-validators [options]
+  convex-doctor [options]
 
 Options:
   --convex-dir <path>      Path to convex/ directory. Default: convex

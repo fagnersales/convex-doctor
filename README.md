@@ -1,4 +1,4 @@
-# check-convex-validators
+# convex-doctor
 
 Static analyzer for Convex codebases — _before_ deploy. Two layers in one pass:
 
@@ -11,13 +11,13 @@ It walks `convex/schema.ts` + every `query | mutation | action | internal*` defi
 
 ```bash
 # inside any Convex project
-bunx check-convex-validators
+bunx convex-doctor
 
 # scan a non-default convex dir
-bunx check-convex-validators --convex-dir backend/convex
+bunx convex-doctor --convex-dir backend/convex
 
 # wire into your typecheck step
-"typecheck": "tsgo --noEmit && bunx check-convex-validators"
+"typecheck": "tsgo --noEmit && bunx convex-doctor"
 ```
 
 ## What it detects
@@ -71,7 +71,7 @@ Each rule deep-links to the exact Convex doc section it enforces. Documented pra
 `--lint-html <path>` writes a self-contained HTML report that renders every finding as a **before** (your real source) / **after** (the recommended fix) pair. Where it can, the "after" is rewritten with your own variable names (e.g. `AWAIT_IN_LOOP` becomes the exact `Promise.all(...)` for your loop), so it is copy-pasteable. When run inside a git repo with a GitHub remote, the report shows the project name and the scanned commit, and each finding deep-links to a GitHub blob permalink pinned to that SHA.
 
 ```bash
-bunx check-convex-validators --convex-dir convex --lint-html report.html
+bunx convex-doctor --convex-dir convex --lint-html report.html
 ```
 
 ### Realistic patterns it understands
@@ -107,7 +107,7 @@ Foreign-key joins (`ctx.db.get(row.fkId)`), enrichment spreads (`{ ...row, relat
 ## Programmatic API
 
 ```ts
-import { run, reportText, exitCode } from "check-convex-validators";
+import { run, reportText, exitCode } from "convex-doctor";
 
 const result = run({
   convexDir: "convex",

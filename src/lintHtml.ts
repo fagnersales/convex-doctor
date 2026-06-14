@@ -88,7 +88,7 @@ export function reportLintHtml(issues: Issue[], opts: LintHtmlOptions = {}): str
 </head>
 <body>
 <header class="top">
-  <div class="brand">check-convex-validators <span class="sub">best-practice report</span></div>
+  <div class="brand">convex-doctor <span class="sub">best-practice report</span></div>
   <div class="legend">
     <span class="pill err">${counts.error} errors</span>
     <span class="pill warn">${counts.warn} warnings</span>

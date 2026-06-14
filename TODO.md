@@ -1,6 +1,6 @@
 # TODO
 
-Roadmap for `check-convex-validators`. Each rule maps to a class of `ReturnsValidationError` we want to catch. ✅ = shipped, 🚧 = partial, ❌ = not yet.
+Roadmap for `convex-doctor`. Each rule maps to a class of `ReturnsValidationError` we want to catch. ✅ = shipped, 🚧 = partial, ❌ = not yet.
 
 ## Shipped — feedback overhaul + realistic patterns
 

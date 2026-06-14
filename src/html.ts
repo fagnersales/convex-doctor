@@ -46,7 +46,7 @@ export function reportHtml(
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>check-convex-validators — call graph</title>
+<title>convex-doctor — call graph</title>
 <style>${CSS}</style>
 </head>
 <body>

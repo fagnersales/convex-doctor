@@ -108,7 +108,7 @@ export function reportText(result: RunResult, opts: ReportOptions = {}): string 
 
   // Header: headline + tally.
   lines.push("");
-  lines.push(`  ${paint("bold", "check-convex-validators")}`);
+  lines.push(`  ${paint("bold", "convex-doctor")}`);
   lines.push("");
   for (const w of wrap(summary.headline, 76)) lines.push(`  ${w}`);
   lines.push("");
@@ -287,8 +287,8 @@ function nextSteps(
     out.push(`  • ${summary.warns} warning(s): likely-but-unproven drift; review and tighten or silence.`);
   }
   const cmd = opts.convexDir
-    ? `bunx check-convex-validators --convex-dir ${opts.convexDir}`
-    : `bunx check-convex-validators`;
+    ? `bunx convex-doctor --convex-dir ${opts.convexDir}`
+    : `bunx convex-doctor`;
   out.push(`  • Re-run after editing:  ${paint("cyan", cmd)}`);
   out.push(`  • Gate CI on it:  add \`${cmd}\` to your typecheck step (exit 1 on errors).`);
   out.push("");

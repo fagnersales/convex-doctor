@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "check-convex-validators",
+      "name": "convex-doctor",
       "dependencies": {
         "ts-morph": "^24.0.0",
         "vis-network": "^10.0.3",
