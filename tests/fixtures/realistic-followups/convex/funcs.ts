@@ -33,6 +33,29 @@ export const fanout = query({
   },
 });
 
+// Compound type-guard filter — the real pattern from the Convex `agent`
+// component: a `Promise.all(ids.map(get))` fan-out cleaned with a predicate
+// like `(d): d is Doc => d !== null && d !== undefined && <more>`. The buried
+// `!== null` conjunct still strips element nullability → clean.
+export const fanoutCompound = query({
+  args: { ids: v.array(v.id("users")) },
+  returns: v.array(
+    v.object({
+      _id: v.id("users"),
+      _creationTime: v.number(),
+      name: v.string(),
+      first: v.string(),
+      last: v.string(),
+    }),
+  ),
+  handler: async (ctx, args) => {
+    const docs = await Promise.all(args.ids.map((id) => ctx.db.get(id)));
+    return docs.filter(
+      (d): d is NonNullable<typeof d> => d !== undefined && d !== null && d.name !== "",
+    );
+  },
+});
+
 // Computed string-concat enrichment field vs v.number() → TYPE_MISMATCH.
 export const enrich = query({
   args: { id: v.id("users") },

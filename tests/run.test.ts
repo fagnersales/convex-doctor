@@ -551,6 +551,38 @@ describe("fan-out join cleaned with `.filter(d => d !== null)`", () => {
   test("null-removing filter makes the element non-null → clean", () => {
     expect(fnErrors("realistic-followups", "fanout")).toEqual([]);
   });
+  // Regression: surfaced by running on get-convex/agent — a compound type-guard
+  // predicate (`!== null` buried in an && chain) must also strip nullability.
+  test("compound type-guard filter (agent pattern) → clean", () => {
+    expect(fnErrors("realistic-followups", "fanoutCompound")).toEqual([]);
+  });
+});
+
+describe("`.map` callback destructure shadows an outer variable (presence FP)", () => {
+  // Surfaced by running on get-convex/presence: `list`/`listRoom`/`listUser` each
+  // do `const online = ...take()` (an array) then map with a callback that
+  // destructures a row field ALSO named `online` (a boolean). The shorthand in
+  // the returned object must resolve to the SHADOWING destructured field, not the
+  // outer array — otherwise a spurious TYPE_MISMATCH ("expected array, validator
+  // has boolean") fires.
+  test("destructured field shadows same-named outer rows<T> array → clean", () => {
+    expect(fnErrors("shadowed-map", "shadowMap")).toEqual([]);
+  });
+  test("opaque element (spread-array receiver) still suppresses the FP → clean", () => {
+    expect(fnErrors("shadowed-map", "shadowSpread")).toEqual([]);
+  });
+  // Guardrail: shadowing must not blanket-suppress real drift. A renamed
+  // destructure (`_id: id`) over a known row still resolves each field to its
+  // schema column shape, so a genuine type drift is still caught.
+  test("renamed destructure with real column drift → still flagged", () => {
+    const tm = fnIssues("shadowed-map", "shadowDrift").find((i) => i.code === "TYPE_MISMATCH");
+    expect(tm).toBeDefined();
+    expect(tm!.message).toContain("count");
+    // and the renamed `id` (`_id: id` → v.id("widgets")) is NOT a false flag
+    expect(
+      fnIssues("shadowed-map", "shadowDrift").some((i) => i.message.includes('"id"')),
+    ).toBe(false);
+  });
 });
 
 describe("computed string-concat enrichment field", () => {

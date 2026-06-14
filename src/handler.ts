@@ -628,14 +628,28 @@ function originFromCall(call: CallExpression, scope: Scope): VarOrigin {
   return { kind: "unknown", expr: call.getText().slice(0, 80) };
 }
 
-/** True for predicates that remove null/undefined elements: `Boolean`,
- *  `u => u`, `u => !!u`, `u => Boolean(u)`, `u => u !== null`, `u => u != null`. */
+/**
+ * True for predicates that remove null/undefined elements: `Boolean`, `u => u`,
+ * `u => !!u`, `u => Boolean(u)`, `u => u !== null`, and — crucially for real
+ * code — compound type-guard predicates like
+ *   `(u): u is Doc<"t"> => u !== null && u !== undefined && !u.tool && …`
+ * which Convex codebases use to filter a `Promise.all(ids.map(get))` fan-out.
+ */
 function isNullRemovingPredicate(pred: Node): boolean {
   if (Node.isIdentifier(pred)) return pred.getText() === "Boolean";
   if (!Node.isArrowFunction(pred) && !Node.isFunctionExpression(pred)) return false;
   const param = pred.getParameters()[0];
   if (!param) return false;
   const pName = param.getName();
+
+  // `(u): u is T => …` — a type-predicate narrowing to a non-nullable T is a
+  // null filter regardless of the body's exact form.
+  const ret = pred.getReturnTypeNode();
+  if (ret && Node.isTypePredicate(ret)) {
+    const t = ret.getTypeNode()?.getText() ?? "";
+    if (t && !/\b(null|undefined)\b/.test(t)) return true;
+  }
+
   let body: Node | undefined = pred.getBody();
   if (Node.isBlock(body)) {
     const rets = body.getStatements().filter(Node.isReturnStatement);
@@ -643,31 +657,41 @@ function isNullRemovingPredicate(pred: Node): boolean {
     body = rets[0]!.getExpression();
   }
   if (!body) return false;
+  return exprExcludesNull(body, pName);
+}
+
+/** True when `node` (the predicate body) provably excludes null/undefined for
+ *  the param `pName`. Recurses through `&&` — any conjunct that excludes null
+ *  makes the whole result non-null. */
+function exprExcludesNull(node: Node, pName: string): boolean {
+  if (Node.isParenthesizedExpression(node)) return exprExcludesNull(node.getExpression(), pName);
   // `u`
-  if (Node.isIdentifier(body)) return body.getText() === pName;
+  if (Node.isIdentifier(node)) return node.getText() === pName;
   // `!!u`
-  if (Node.isPrefixUnaryExpression(body) && body.getOperatorToken() === SyntaxKind.ExclamationToken) {
-    const inner = body.getOperand();
-    if (
+  if (Node.isPrefixUnaryExpression(node) && node.getOperatorToken() === SyntaxKind.ExclamationToken) {
+    const inner = node.getOperand();
+    return (
       Node.isPrefixUnaryExpression(inner) &&
       inner.getOperatorToken() === SyntaxKind.ExclamationToken &&
       Node.isIdentifier(inner.getOperand()) &&
       inner.getOperand().getText() === pName
-    ) {
-      return true;
-    }
+    );
   }
   // `Boolean(u)`
-  if (Node.isCallExpression(body)) {
-    const e = body.getExpression();
-    if (Node.isIdentifier(e) && e.getText() === "Boolean") return true;
+  if (Node.isCallExpression(node)) {
+    const e = node.getExpression();
+    return Node.isIdentifier(e) && e.getText() === "Boolean";
   }
-  // `u !== null` / `u != null` / `u !== undefined`
-  if (Node.isBinaryExpression(body)) {
-    const op = body.getOperatorToken().getText();
+  if (Node.isBinaryExpression(node)) {
+    const op = node.getOperatorToken().getText();
+    // `&&` chain — any conjunct excluding null suffices.
+    if (op === "&&") {
+      return exprExcludesNull(node.getLeft(), pName) || exprExcludesNull(node.getRight(), pName);
+    }
+    // `u !== null` / `u != null` / `u !== undefined`
     if (op === "!==" || op === "!=") {
-      const l = body.getLeft();
-      const r = body.getRight();
+      const l = node.getLeft();
+      const r = node.getRight();
       const idIsParam = (n: Node) => Node.isIdentifier(n) && n.getText() === pName;
       if ((idIsParam(l) && isNullishLiteral(r)) || (idIsParam(r) && isNullishLiteral(l))) {
         return true;
@@ -939,11 +963,11 @@ function tryClassifyMapCall(call: CallExpression, scope: Scope): ReturnIntent | 
   const params = arg.getParameters();
   if (params[0]) {
     const elementOrigin = elementOriginOf(receiverOrigin);
-    if (elementOrigin) {
-      const nameNode = params[0].getNameNode();
-      if (Node.isIdentifier(nameNode)) {
-        subScope.vars.set(nameNode.getText(), { origin: elementOrigin });
-      }
+    const nameNode = params[0].getNameNode();
+    if (Node.isIdentifier(nameNode)) {
+      if (elementOrigin) subScope.vars.set(nameNode.getText(), { origin: elementOrigin });
+    } else if (Node.isObjectBindingPattern(nameNode)) {
+      bindDestructuredParam(nameNode, elementOrigin, subScope);
     }
   }
 
@@ -979,6 +1003,57 @@ function tryClassifyMapCall(call: CallExpression, scope: Scope): ReturnIntent | 
     element: elements[0]!,
     elements: elements.length > 1 ? elements : undefined,
   };
+}
+
+/**
+ * Bind the names destructured out of a `.map` callback parameter
+ * (`({ a, b: c, ...rest }) => ...`) into the sub-scope. Each binding SHADOWS any
+ * same-named outer variable — without this a field like `online` leaks to an
+ * outer `const online = ...collect()` array and the analyzer invents a spurious
+ * TYPE_MISMATCH (the get-convex/presence `list`/`listRoom`/`listUser` false
+ * positive: a row field shadowed by a same-named outer rows<T> array).
+ *
+ * When the mapped element is a known schema row, each field resolves to its
+ * column shape — so a genuinely-reprojected field that drifts is still caught;
+ * otherwise the name is bound opaque (`param`) so it can never invent drift.
+ */
+function bindDestructuredParam(
+  pattern: ObjectBindingPattern,
+  elementOrigin: VarOrigin | null,
+  subScope: Scope,
+): void {
+  let rowFields: Map<string, FieldShape> | null = null;
+  if (elementOrigin?.kind === "rowOf") {
+    const t = subScope.schema?.tables.get(elementOrigin.table);
+    const rs = t ? rowShape(t) : null;
+    if (rs && rs.kind === "object") rowFields = rs.fields;
+  }
+  for (const el of pattern.getElements()) {
+    const localNameNode = el.getNameNode();
+    // Nested destructure (`{ a: { b } }`) — shadow its names opaquely so they
+    // can't leak to an outer binding either.
+    if (Node.isObjectBindingPattern(localNameNode)) {
+      bindDestructuredParam(localNameNode, null, subScope);
+      continue;
+    }
+    if (!Node.isIdentifier(localNameNode)) continue;
+    const localName = localNameNode.getText();
+    if (el.getDotDotDotToken()) {
+      // `...rest` collects the remaining fields as an object — opaque.
+      subScope.vars.set(localName, { origin: { kind: "param" } });
+      continue;
+    }
+    // Source field is the renamed property (`{ src: local }`) or the local name.
+    const propNode = el.getPropertyNameNode();
+    const propName =
+      propNode && Node.isIdentifier(propNode) ? propNode.getText() : localName;
+    const fs = rowFields?.get(propName);
+    subScope.vars.set(localName, {
+      origin: fs
+        ? { kind: "shapeOf", shape: fs.shape, from: `destructure:${propName}` }
+        : { kind: "param" },
+    });
+  }
 }
 
 /**
