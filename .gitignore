@@ -3,3 +3,7 @@ node_modules
 .DS_Store
 dist
 .bun
+
+# Cloned third-party repos used as real-world test beds (not part of the package)
+testbeds/
+reports/
