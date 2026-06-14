@@ -400,6 +400,23 @@ describe("null-narrowing guard (C1/C3)", () => {
   });
 });
 
+describe("positive-guard narrowing in consequent (C4)", () => {
+  // `if (existing) return { id: existing }` — the spokpay `seedGamepassCustom`
+  // false positive. `existing` is provably non-null inside its own truthiness
+  // guard, so the `catalogId: v.string()` validator is correct.
+  test("`if (x) return {…x}` does NOT fire TYPE_MISMATCH", () => {
+    expect(fnIssues("positive-narrowing", "seedGuarded")).toEqual([]);
+  });
+  test("`if (x !== null) return {…x}` narrows the consequent too", () => {
+    expect(fnIssues("positive-narrowing", "seedGuardedNeqNull")).toEqual([]);
+  });
+  test("an UNGUARDED nullable return is STILL flagged (soundness)", () => {
+    expect(fnErrors("positive-narrowing", "seedUnguarded").map((i) => i.code)).toContain(
+      "TYPE_MISMATCH",
+    );
+  });
+});
+
 describe("nullish fallback nullability (C2)", () => {
   test("`a ?? <non-null>` → no NULL_BRANCH_MISSING", () => {
     expect(fnIssues("nullish-fallback", "fbNonNull")).toEqual([]);

@@ -70,8 +70,14 @@ export function analyzeHandler(handler: HandlerFn, ctx: AnalyzeContext = {}): Re
       intents.push({ kind: "unanalyzed", reason: "bare `return` (undefined)" });
       continue;
     }
+    // A return nested inside `if (x) { … }` proves `x` non-null on that path —
+    // narrow the scope for this return only (C4). Without it, returning a
+    // nullable binding from inside its own truthiness guard fires a spurious
+    // NULL_BRANCH / TYPE_MISMATCH (the `if (existing) return { id: existing }`
+    // idiom).
+    const retScope = narrowScopeForReturn(ret, scope);
     for (const branch of expandConditionals(expr)) {
-      intents.push(classifyExpression(branch, scope));
+      intents.push(classifyExpression(branch, retScope));
     }
   }
 
@@ -203,6 +209,95 @@ function narrowNonNull(name: string, scope: Scope): void {
       origin: { ...info.origin, shape: stripNull(info.origin.shape) },
     });
   }
+}
+
+/**
+ * Clone `scope` and strip null from every binding that the path reaching `ret`
+ * proves non-null (C4). A return inside `if (x) { … }` (the consequent) proves
+ * `x` truthy; a return inside the `else` of `if (!x) …` proves the same names
+ * the early-exit narrower would find on fall-through. Walks every enclosing
+ * `if` up to the handler's own function boundary so nested guards compound.
+ * Returns the original scope untouched when nothing narrows — the common case,
+ * so no map is copied for guard-free returns.
+ */
+function narrowScopeForReturn(ret: ReturnStatement, scope: Scope): Scope {
+  const names = new Set<string>();
+  let child: Node = ret;
+  let node: Node | undefined = ret.getParent();
+  while (node) {
+    if (Node.isIfStatement(node)) {
+      const cond = node.getExpression();
+      const thenS = node.getThenStatement();
+      const elseS = node.getElseStatement();
+      if (thenS && nodeContains(thenS, child)) {
+        for (const n of positiveGuardNames(cond)) names.add(n);
+      } else if (elseS && nodeContains(elseS, child)) {
+        // else branch ⇒ the condition is falsy ⇒ the names the early-exit
+        // narrower proves non-null on a `!cond` fall-through are non-null here.
+        for (const n of guardedNullNames(cond)) names.add(n);
+      }
+    }
+    // Outer functions don't govern this handler's bindings — stop at the boundary.
+    if (
+      Node.isArrowFunction(node) ||
+      Node.isFunctionExpression(node) ||
+      Node.isFunctionDeclaration(node)
+    ) {
+      break;
+    }
+    child = node;
+    node = node.getParent();
+  }
+  if (names.size === 0) return scope;
+  const narrowed: Scope = { ...scope, vars: new Map(scope.vars) };
+  for (const name of names) narrowNonNull(name, narrowed);
+  return narrowed;
+}
+
+/** True when `inner` falls within `outer`'s source range. `inner` is always a
+ *  direct child here, so this is an exact branch test, not a heuristic. */
+function nodeContains(outer: Node, inner: Node): boolean {
+  return inner.getStart() >= outer.getStart() && inner.getEnd() <= outer.getEnd();
+}
+
+/**
+ * Names provably non-null when `cond` is truthy (the `if (cond) { … }` body):
+ *  - `if (x)` — truthiness rules out null/undefined;
+ *  - `if (A && B)` — a truthy conjunction proves *both* operands truthy;
+ *  - `if (x !== null)` / `if (x != null)` / loose `if (x != undefined)`.
+ * `||` is intentionally excluded — a truthy disjunction proves neither side.
+ * A bare `!== undefined` is excluded too: on a `T | null` it leaves null in
+ * play (mirrors `isNarrowingNullCompare`'s soundness on the `===` side).
+ */
+function positiveGuardNames(cond: Node): string[] {
+  if (Node.isParenthesizedExpression(cond)) return positiveGuardNames(cond.getExpression());
+  if (Node.isIdentifier(cond)) return [cond.getText()];
+  if (Node.isBinaryExpression(cond)) {
+    const op = cond.getOperatorToken().getText();
+    if (op === "&&") {
+      return [...positiveGuardNames(cond.getLeft()), ...positiveGuardNames(cond.getRight())];
+    }
+    if (op === "!==" || op === "!=") {
+      const left = cond.getLeft();
+      const right = cond.getRight();
+      const id = Node.isIdentifier(left) ? left : Node.isIdentifier(right) ? right : null;
+      const lit = Node.isIdentifier(left) ? right : left;
+      if (id && isNarrowingNonNullCompare(op, lit)) return [id.getText()];
+    }
+  }
+  return [];
+}
+
+/**
+ * Mirror of `isNarrowingNullCompare` for the positive operators: `<id> <op>
+ * <lit>` being true proves the id non-null. `!== null` / `!= null` strip null;
+ * loose `!= undefined` strips null too; strict `!== undefined` does NOT (a
+ * `T | null` survives it).
+ */
+function isNarrowingNonNullCompare(op: string, lit: Node): boolean {
+  if (lit.getKind() === SyntaxKind.NullKeyword) return true;
+  if (Node.isIdentifier(lit) && lit.getText() === "undefined") return op === "!=";
+  return false;
 }
 
 function repropagateDerivedBindings(block: Block, scope: Scope): void {
