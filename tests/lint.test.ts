@@ -1,6 +1,5 @@
 import { describe, test, expect } from "bun:test";
 import { run } from "../src/scan.ts";
-import { reportLintHtml } from "../src/lintHtml.ts";
 import type { Issue, IssueCode, RunOptions } from "../src/types.ts";
 
 const FIX = new URL("./fixtures/", import.meta.url).pathname;
@@ -179,58 +178,6 @@ describe("lint: WRONG_RUNTIME_IMPORT", () => {
     const issues = runLint("lint").filter((i) => i.code === "WRONG_RUNTIME_IMPORT");
     expect(issues.length).toBe(1);
     expect(issues[0]!.message).toContain("use node");
-  });
-});
-
-describe("lint: HTML before/after report", () => {
-  const issues = runLint("lint");
-  const html = reportLintHtml(issues, {
-    convexDir: `${FIX}lint/convex`,
-    projectName: "acme/widgets",
-    repoUrl: "https://github.com/acme/widgets",
-    commitSha: "abc1234def5678",
-    repoRoot: `${FIX}lint`,
-  });
-
-  test("renders project name and a commit permalink in the header", () => {
-    expect(html).toContain("acme/widgets");
-    expect(html).toContain("https://github.com/acme/widgets/commit/abc1234def5678");
-  });
-
-  test("each finding links to a GitHub blob permalink pinned to the SHA", () => {
-    expect(html).toMatch(
-      /https:\/\/github\.com\/acme\/widgets\/blob\/abc1234def5678\/convex\/dirty\.ts#L\d+/,
-    );
-  });
-
-  test("shows both a before and an after pane", () => {
-    expect(html).toContain(">before<");
-    expect(html).toContain("after —");
-  });
-
-  test("renders a per-rule summary with jump links above the cards", () => {
-    expect(html).toContain('class="summary"');
-    expect(html).toMatch(/finding[s]? across \d+ rule/);
-    // a chip for a rule that links to its first card anchor
-    expect(html).toMatch(/<a class="chip [a-z]+" href="#f\d+"[\s\S]*?AWAIT_IN_LOOP/);
-  });
-
-  test("the before pane shows the complete statement, not a sliced line", () => {
-    // the loop-read finding's before must include the whole for-of body
-    expect(html).toContain("for (const inv of agent!.inventory)");
-    expect(html).toContain("ctx.db.get(inv.itemId)");
-  });
-
-  // NB: the HTML escapes `>` and `"`, so assert on escape-safe fragments.
-  test("AWAIT_IN_LOOP after is an instance-specific Promise.all using the real names", () => {
-    expect(html).toContain("Promise.all");
-    expect(html).toContain("agent!.inventory.map((inv)");
-    expect(html).toContain("ctx.db.get(inv.itemId)");
-  });
-
-  test("FILTER_IN_QUERY after rewrites to .withIndex on the real field", () => {
-    expect(html).toContain(".withIndex(");
-    expect(html).toContain("by_name");
   });
 });
 

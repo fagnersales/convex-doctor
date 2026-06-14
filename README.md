@@ -1,11 +1,11 @@
 # convex-doctor
 
-Static analyzer for Convex codebases — _before_ deploy. Two layers in one pass:
+Static analyzer for Convex codebases — _before_ deploy. Two layers in one pass, emitted as plain text or JSON with file/line for fast triage:
 
 1. **Returns-validator drift** — the `returns` validator on a query/mutation drifts away from the schema, the handler return shape, or both, so it passes typecheck but throws `ReturnsValidationError` at runtime when a real row is returned.
 2. **Best-practice lints** — the Convex anti-patterns (`await` in a loop, `.filter` on a query, unbounded `.collect`, nondeterministic queries, missing arg validators, …), including the rules the official `@convex-dev/eslint-plugin` ships. These fire on _any_ Convex code, whether or not the project uses `returns` validators, and run by default — no ESLint install or config required (`--no-lint` to skip).
 
-It walks `convex/schema.ts` + every `query | mutation | action | internal*` definition, infers what each handler can return, compares that against the declared `returns` validator, and lints each handler body. Issues are emitted with file/line for fast triage.
+It walks `convex/schema.ts` + every `query | mutation | action | internal*` definition, infers what each handler can return, compares that against the declared `returns` validator, and lints each handler body.
 
 ## Quick start
 
@@ -66,14 +66,6 @@ Run by default alongside the drift checks (`--no-lint` to disable). They encode 
 
 Each rule deep-links to the exact Convex doc section it enforces. Documented practices that are *not* statically decidable (auth checks on public functions, same-runtime `runAction`) are deliberately left out rather than guessed at — see `TODO.md`.
 
-### Before/after HTML report
-
-`--lint-html <path>` writes a self-contained HTML report that renders every finding as a **before** (your real source) / **after** (the recommended fix) pair. Where it can, the "after" is rewritten with your own variable names (e.g. `AWAIT_IN_LOOP` becomes the exact `Promise.all(...)` for your loop), so it is copy-pasteable. When run inside a git repo with a GitHub remote, the report shows the project name and the scanned commit, and each finding deep-links to a GitHub blob permalink pinned to that SHA.
-
-```bash
-bunx convex-doctor --convex-dir convex --lint-html report.html
-```
-
 ### Realistic patterns it understands
 
 Foreign-key joins (`ctx.db.get(row.fkId)`), enrichment spreads (`{ ...row, related }` with the related doc/array diffed against the nested validator), `ctx.storage.getUrl()` as `string | null`, direct `return result.page`, count queries (`rows.length`), value-bounded literals (`return "active"` vs `v.literal(...)`), `v.optional(v.object(...))` returns, the paginated envelope (`isDone` / `continueCursor`), spread schema tables (`...sharedTables`), `satisfies Validator<…>`, and shared validators referenced by multiple fields.
@@ -91,18 +83,31 @@ Foreign-key joins (`ctx.db.get(row.fkId)`), enrichment spreads (`{ ...row, relat
     - `null`, primitive, or `unanalyzed`
 5. **Matcher** — pairs each return path with the right branch of the (possibly union) `returns` validator and emits diff issues.
 
+## Dead-function detection
+
+Optional. `--dead` builds a call graph across the project — resolving `api.*` / `internal.*` chains through barrel re-exports — and lists every Convex function no caller reaches. Use `--dead-only` to print just the list, `--ignore-dead <pattern>` to exclude known entry points (`*` wildcard, repeatable), and `--project-root <path>` to widen the caller scan beyond the parent of `--convex-dir`.
+
+```bash
+bunx convex-doctor --convex-dir convex --dead-only --ignore-dead 'migrations:*'
+```
+
 ## CLI
 
 ```
---convex-dir <path>     Default: convex
---schema <path>         Default: <convex-dir>/schema.ts
---include-unanalyzed    Print INFO entries for unanalyzed handlers
---json                  Machine-readable output
---strict                Exit nonzero on warnings too
---no-lint               Skip best-practice lints (drift checks only)
---lint-html <path>      Write an HTML report of the lints as before/after pairs
--h, --help              Show help
+--convex-dir <path>      Path to convex/ directory. Default: convex
+--schema <path>          Path to schema.ts. Default: <convex-dir>/schema.ts
+--include-unanalyzed     Print INFO entries for unanalyzed handlers
+--json                   Emit JSON instead of text
+--strict                 Exit nonzero if any warnings are present
+--no-lint                Skip the best-practice lints (drift checks only)
+--dead                   Print the dead-function list after the regular report
+--dead-only              Print only the dead list (or dead+ignored under --json)
+--ignore-dead <pattern>  Glob (`*` wildcard) excluding nodes from the dead list. Repeatable
+--project-root <path>    Root scanned for callers (used by --dead). Default: parent of <convex-dir>
+-h, --help               Show help
 ```
+
+Exit codes: `0` no errors (and no warnings under `--strict`), `1` errors found (or warnings under `--strict`), `2` bad arguments.
 
 ## Programmatic API
 
@@ -120,14 +125,11 @@ console.log(reportText(result));
 process.exit(exitCode(result, false));
 ```
 
+`reportJson` and `buildGraph` are exported alongside `run` for JSON output and the call graph.
+
 ## Status
 
-v0.3.0 — adds the best-practice lint layer (9 rules covering the Convex
-anti-patterns + the official ESLint plugin's rules), on top of the existing
-drift engine: high-frequency drift patterns + R4 recursive type compare,
-discriminated-union scoring, both-branch ternary, `.map`/`Promise.all`
-tracing, and `ctx.runQuery/runMutation/runAction` cross-fn propagation.
-See `TODO.md` for known gaps and roadmap.
+Two analysis layers over one shared ts-morph pass: the returns-validator **drift engine** (recursive type compare, discriminated-union scoring, both-branch ternary, `.map`/`Promise.all` tracing, and `ctx.runQuery/runMutation/runAction` cross-function propagation) and ~20 doc-grounded **best-practice rules**, plus optional dead-function detection. See `TODO.md` for known gaps and roadmap.
 
 ## License
 

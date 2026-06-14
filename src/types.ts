@@ -224,7 +224,7 @@ export interface RunOptions {
    *  returns-validator drift checks. The CLI defaults this ON; the core
    *  `run()` defaults it OFF so drift-only callers stay unaffected. */
   lint?: boolean;
-  /** When set, also build a call graph for HTML output. */
+  /** When set, build the call graph used by dead-function detection (--dead). */
   buildGraph?: boolean;
   /** Root directory to scan for callers (default: parent of convexDir). */
   projectRoot?: string;
