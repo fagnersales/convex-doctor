@@ -636,6 +636,12 @@ function compareShapes(expected: Shape, actual: Shape): string | null {
     }
   }
 
+  // An Id<T> is a string at runtime, so a handler that returns an id satisfies a
+  // v.string() validator (some components validate `_id` as v.string()). The
+  // reverse — a plain string vs v.id(...) — is NOT necessarily safe, so only this
+  // direction is waved through.
+  if (expected.kind === "id" && actual.kind === "string") return null;
+
   if (expected.kind !== actual.kind) {
     return `expected ${expected.kind}, validator has ${actual.kind}`;
   }

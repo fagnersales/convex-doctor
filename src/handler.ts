@@ -421,6 +421,18 @@ function inferOrigin(expr: Expression, scope: Scope): VarOrigin {
   // args.X where X is v.id("T") in argsShape → idOf
   if (Node.isPropertyAccessExpression(expr)) {
     const recv = expr.getExpression();
+    // `<x>.length` is a number (arrays/strings) — unless the receiver is a
+    // schema row that literally has a `length` column, which wins. This lets an
+    // object-literal field like `{ name: items.length }` diff against the
+    // validator instead of flattening to `any`. (Sensitivity audit: geospatial /
+    // aggregate `.map()` projections.)
+    if (expr.getName() === "length") {
+      const recvOrigin = inferOrigin(recv, scope);
+      const rowHasLengthCol =
+        recvOrigin.kind === "rowOf" &&
+        !!scope.schema?.tables.get(recvOrigin.table)?.fields.has("length");
+      if (!rowHasLengthCol) return { kind: "primitive", primitive: "number" };
+    }
     if (
       Node.isIdentifier(recv) &&
       scope.argsParamName === recv.getText() &&
@@ -992,6 +1004,15 @@ function tryClassifyMapCall(call: CallExpression, scope: Scope): ReturnIntent | 
       if (elementOrigin) subScope.vars.set(nameNode.getText(), { origin: elementOrigin });
     } else if (Node.isObjectBindingPattern(nameNode)) {
       bindDestructuredParam(nameNode, elementOrigin, subScope);
+    }
+  }
+  // `.map((x, i) => ...)` — the 2nd callback param is the array index, always a
+  // number. Binding it lets a projected field like `{ id: i }` diff against the
+  // validator instead of flattening to `any`. (Sensitivity audit: expo-push.)
+  if (params[1]) {
+    const idxNode = params[1].getNameNode();
+    if (Node.isIdentifier(idxNode)) {
+      subScope.vars.set(idxNode.getText(), { origin: { kind: "primitive", primitive: "number" } });
     }
   }
 

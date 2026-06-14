@@ -637,6 +637,22 @@ describe("false negatives fixed by the sensitivity (fault-injection) audit", () 
   test("doc() validator with a matching single-doc return stays clean", () => {
     expect(fnErrors("false-negatives", "docClean")).toEqual([]);
   });
+  // FIX F — `.length` is a number, diffed instead of flattened to `any`.
+  test("`.length` enrichment field drift is caught", () => {
+    const tm = fnIssues("false-negatives", "lengthField").find((i) => i.code === "TYPE_MISMATCH");
+    expect(tm).toBeDefined();
+    expect(tm!.message).toContain("nameLen");
+  });
+  // FIX G — the `.map((x, i) => ...)` index param is a number.
+  test("`.map` index-param projection drift is caught", () => {
+    const tm = fnIssues("false-negatives", "mapIndexField").find((i) => i.code === "TYPE_MISMATCH");
+    expect(tm).toBeDefined();
+    expect(tm!.message).toContain("idx");
+  });
+  // id-vs-string compat — an Id satisfies a v.string() validator (not a FP).
+  test("handler id vs v.string() validator stays clean (Id is a string)", () => {
+    expect(fnErrors("false-negatives", "rowIdAsString")).toEqual([]);
+  });
 });
 
 describe("computed string-concat enrichment field", () => {

@@ -97,3 +97,53 @@ export const docClean = query({
     return await ctx.db.get(args.id);
   },
 });
+
+// FIX F — `.length` is always a number; an enrichment field set to `x.length`
+// is diffed against the validator instead of flattening to `any`. nameLen is a
+// number but the validator declares v.string() → TYPE_MISMATCH (geospatial /
+// aggregate `.map()` projections).
+export const lengthField = query({
+  args: { id: v.id("points") },
+  returns: v.object({
+    _id: v.id("points"),
+    _creationTime: v.number(),
+    name: v.string(),
+    sortKey: v.number(),
+    nameLen: v.string(),
+  }),
+  handler: async (ctx, args) => {
+    const p = await ctx.db.get(args.id);
+    if (!p) throw new Error("missing");
+    return { ...p, nameLen: p.name.length };
+  },
+});
+
+// FIX G — the 2nd `.map()` callback param is the array index (a number). A field
+// set to it (`idx: i`) is diffed, not flattened to `any`. idx is a number but
+// the validator declares v.string() → TYPE_MISMATCH (expo-push `id: idx`).
+export const mapIndexField = query({
+  args: {},
+  returns: v.array(v.object({ name: v.string(), idx: v.string() })),
+  handler: async (ctx) => {
+    const ps = await ctx.db.query("points").collect();
+    return ps.map((p, i) => ({ name: p.name, idx: i }));
+  },
+});
+
+// id-vs-string compat — an Id is a string at runtime, so a handler returning a
+// row whose `_id` is id<points> satisfies a validator that declares `_id`
+// v.string(). Must stay CLEAN (workflow component validates `_id` as v.string()).
+export const rowIdAsString = query({
+  args: { id: v.id("points") },
+  returns: v.object({
+    _id: v.string(),
+    _creationTime: v.number(),
+    name: v.string(),
+    sortKey: v.number(),
+  }),
+  handler: async (ctx, args) => {
+    const p = await ctx.db.get(args.id);
+    if (!p) throw new Error("missing");
+    return p;
+  },
+});
