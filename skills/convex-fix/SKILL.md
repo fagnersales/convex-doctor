@@ -43,21 +43,31 @@ Repeat until `groups` reports `done: true` (or the user's arg-scoped groups are 
    - `guided` — deterministic recipe; open each file and read the handler/schema context before editing.
    - `manual` — architectural/judgment. If the fix needs a design decision you can't make safely, **skip this group**, record why, and move on (see Stopping).
 
-3. **Load the work-list**
+3. **Load a bounded batch of sites** — never pull the whole group at once; a big
+   group (hundreds of sites) would flood your context.
 
    ```bash
-   DOCTOR --only <CODE> --json [--convex-dir <path>]
+   DOCTOR --only <CODE> --json --limit 25 [--convex-dir <path>]
    ```
 
-   Each issue has `filePath`, `line`, `function`, `message`, `why`, `fix`, `fixCode` (`before`/`after`/`add`/`remove`), `pointerLine`/`pointerColumn`/`pointerLength`, and `docUrl`. Fix **every** site. Prefer `fixCode` when present; otherwise apply `fix` + the recipe behind `docUrl`. Keep edits faithful to the surrounding code's style.
+   Response shape: `{ total, returned, remaining, rule, sites[] }`.
+   - `rule` carries the shared recipe **once**: `why`, `fix`, `docUrl`, `autofix`.
+   - each `site` has `file`, `line`, `function`, `message`, an optional concise
+     `fixCode` (validator edits), and a `pointer` ({line, column, length}).
+   For lint-style groups there's no per-site `fixCode` — open `file` at `line`,
+   apply the `rule.fix` recipe, keep edits faithful to the surrounding style.
+   Fix every site in the batch.
 
-4. **Verify — re-scan the same group**
+4. **Verify / advance — re-scan the same group**
 
    ```bash
-   DOCTOR --only <CODE> --json [--convex-dir <path>]
+   DOCTOR --only <CODE> --json --limit 25 [--convex-dir <path>]
    ```
 
-   The issue list for this code must be **empty**. If anything remains, fix it before continuing. (Re-running also surfaces any *new* issue your edits introduced anywhere — if a fix created a different code, handle it before committing.)
+   **Re-scanning is the cursor.** The sites you just fixed are gone, so this
+   returns the next batch (and surfaces any *new* issue your edits introduced).
+   Repeat 3–4 until `total` reaches **0** — only then is the group complete. Keep
+   `--limit` small enough that each batch fits comfortably in context.
 
 5. **Green-gate.** Run the project's typecheck/test command found in preflight. If it fails, **stop the loop**, report the failure and the diff, and let the user decide. Never commit over a red gate.
 

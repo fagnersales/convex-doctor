@@ -1,6 +1,14 @@
 import { readFileSync } from "node:fs";
 import { resolve as pathResolve, relative as pathRelative } from "node:path";
-import type { Issue, IssueCode, IssueSeverity, RunResult, RunSummary, Timings } from "./types.ts";
+import type {
+  FixCode,
+  Issue,
+  IssueCode,
+  IssueSeverity,
+  RunResult,
+  RunSummary,
+  Timings,
+} from "./types.ts";
 import {
   AUTOFIX,
   CATEGORY_LABEL,
@@ -472,8 +480,37 @@ export function computeGroups(issues: Issue[]): IssueGroup[] {
   return groups;
 }
 
+/** Default cap on sites returned by `--only … --json`, so a 455-issue group
+ *  never floods an agent's context. Override with `--limit N` (0 = all). */
+export const DEFAULT_ONLY_LIMIT = 20;
+
+/**
+ * Trim a fixCode for the work-list: keep the actionable keys (`add`/`remove`/
+ * `after`) and a `before` only when it is a short paired diff. A lone multi-line
+ * `before` (lint rules capture the whole loop body) is just context the agent
+ * already has from the file — dropping it is the bulk of the size win.
+ */
+function compactFix(fc: FixCode | undefined): FixCode | undefined {
+  if (!fc) return undefined;
+  const out: FixCode = {};
+  if (fc.before && fc.after && fc.before.length <= 160) out.before = fc.before;
+  if (fc.after) out.after = fc.after;
+  if (fc.add) out.add = fc.add;
+  if (fc.remove) out.remove = fc.remove;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 export function reportGroupsJson(issues: Issue[], scannedFunctions: number): string {
-  const groups = computeGroups(issues);
+  // Deliberately tiny: just the code, counters, and the autofix tag — enough to
+  // pick the top group. The array is priority-ordered, so an agent takes [0].
+  // Everything else (why, fix, fixCode, docUrl, source) is one `--only` away.
+  const groups = computeGroups(issues).map((g) => ({
+    code: g.code,
+    severity: g.severity,
+    count: g.count,
+    files: g.files,
+    autofix: g.autofix,
+  }));
   return JSON.stringify(
     {
       schemaVersion: 1,
@@ -482,6 +519,65 @@ export function reportGroupsJson(issues: Issue[], scannedFunctions: number): str
       groupCount: groups.length,
       done: groups.length === 0,
       groups,
+    },
+    null,
+    2,
+  );
+}
+
+/**
+ * Compact work-list for `--only <CODE> --json`. The shared recipe (why / fix /
+ * docUrl / autofix) is emitted ONCE under `rule`; each site carries only its
+ * own location + concrete `fixCode`. Capped at `limit` (default
+ * DEFAULT_ONLY_LIMIT, 0 = all) — fix the batch, re-scan, and the next call
+ * returns the next batch (the fixed sites are gone), so context stays bounded.
+ */
+export function reportOnlyJson(
+  issues: Issue[],
+  scannedFunctions: number,
+  opts: { limit?: number; convexDir?: string } = {},
+): string {
+  const total = issues.length;
+  const cap = opts.limit === undefined ? DEFAULT_ONLY_LIMIT : opts.limit;
+  const shown = cap === 0 ? issues : issues.slice(0, cap);
+
+  const codes = new Set(shown.map((i) => i.code));
+  const single = codes.size === 1 ? [...codes][0]! : null;
+
+  const sites = shown.map((i) => ({
+    file: rel(i.filePath, opts.convexDir),
+    line: i.line,
+    function: i.function,
+    // Only when the selector spans codes (a category) — otherwise it's `rule.code`.
+    ...(single ? {} : { code: i.code }),
+    message: i.message,
+    ...((c) => (c ? { fixCode: c } : {}))(compactFix(i.fixCode)),
+    pointer: {
+      line: i.pointerLine ?? i.line,
+      column: i.pointerColumn ?? null,
+      length: i.pointerLength ?? null,
+    },
+  }));
+
+  const rule = single
+    ? {
+        code: single,
+        autofix: AUTOFIX[single],
+        why: RULE_META[single].why,
+        fix: RULE_META[single].fixHint,
+        docUrl: RULE_META[single].docUrl,
+      }
+    : null;
+
+  return JSON.stringify(
+    {
+      schemaVersion: 1,
+      scannedFunctions,
+      total,
+      returned: sites.length,
+      remaining: total - sites.length,
+      ...(rule ? { rule } : {}),
+      sites,
     },
     null,
     2,
@@ -498,35 +594,30 @@ export function reportGroupsText(
   if (groups.length === 0) {
     return `${paint("green", "✓")} ${paint("bold", "No groups — nothing to fix.")} (${scannedFunctions} functions scanned)\n`;
   }
+  const sevPaint = (s: IssueSeverity, t: string) =>
+    paint(s === "error" ? "red" : s === "warn" ? "yellow" : "blue", t);
+  const codeW = Math.min(30, Math.max(...groups.map((g) => g.code.length)));
+  const cntW = Math.max(...groups.map((g) => String(g.count).length));
+
   const lines: string[] = [];
   lines.push("");
   lines.push(
-    `  ${paint("bold", "convex-doctor")} ${paint("gray", "· fixable groups (highest priority first)")}`,
+    `  ${paint("bold", "convex-doctor")} ${paint("gray", `· ${groups.length} fixable group(s), top first`)}`,
   );
   lines.push("");
-  const sevPaint = (s: IssueSeverity, t: string) =>
-    paint(s === "error" ? "red" : s === "warn" ? "yellow" : "blue", t);
-  let n = 0;
   for (const g of groups) {
-    n++;
-    const icon = SEV_META[g.severity].icon;
-    const counts =
-      `${g.count} in ${g.files} file${g.files === 1 ? "" : "s"}` +
-      (g.errors && (g.warns || g.infos) ? ` (${g.errors} err)` : "");
+    const icon = sevPaint(g.severity, SEV_META[g.severity].icon);
+    const code = paint("bold", g.code.padEnd(codeW));
+    const count = String(g.count).padStart(cntW);
+    const files = `${g.files} file${g.files === 1 ? "" : "s"}`;
     lines.push(
-      `  ${String(n).padStart(2)}. ${sevPaint(g.severity, icon)} ${paint("bold", g.code)} ` +
-        `${paint("gray", "·")} ${paint("magenta", g.autofix)} ${paint("gray", "·")} ${counts}`,
+      `  ${icon} ${code}  ${count} ${paint("gray", `· ${files} · ${g.autofix}`)}`,
     );
-    lines.push(`      ${paint("gray", g.title)}`);
-    lines.push(
-      `      ${paint("cyan", `convex-doctor --only ${g.code}` + (opts.convexDir ? ` --convex-dir ${opts.convexDir}` : ""))}`,
-    );
-    lines.push("");
   }
-  lines.push(
-    `  ${paint("gray", `${groups.length} group(s). Lock the top one, fix every site, re-run --only <CODE> to verify, commit, repeat.`)}`,
-  );
-  lines.push(`  ${paint("gray", "Loop recipe:")} ${paint("cyan", "convex-doctor agent-guide")}`);
+  lines.push("");
+  const only = `convex-doctor --only <CODE>` + (opts.convexDir ? ` --convex-dir ${opts.convexDir}` : "");
+  lines.push(`  ${paint("gray", "fixes for a group →")} ${paint("cyan", only)}`);
+  lines.push(`  ${paint("gray", "the loop       →")} ${paint("cyan", "convex-doctor agent-guide")}`);
   lines.push("");
   return lines.join("\n");
 }

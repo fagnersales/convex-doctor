@@ -118,18 +118,20 @@ Exit codes: `0` no errors (and no warnings under `--strict`), `1` errors found (
 
 convex-doctor is built to be driven by a coding agent. Instead of dumping every failing file at once, work **one rule code at a time**: a _group_ is all issues sharing a code, and the fix within a group is one repeatable recipe. The agent locks a group, fixes every site, re-scans to verify, commits, and moves to the next — a loop that converges to zero with clean, reviewable, per-group commits.
 
+Both outputs are deliberately small so they don't flood an agent's context:
+
 ```bash
-# 1. the menu — groups, highest priority first (errors → warnings → info)
+# 1. the menu — a tiny line per group, highest priority first (errors → warnings → info)
 bunx @fagnersales/convex-doctor groups --json
 
-# 2. the locked group's full work-list (rich per-issue fix payload)
-bunx @fagnersales/convex-doctor --only AWAIT_IN_LOOP --json
+# 2. a BOUNDED batch of the locked group's sites (shared recipe once + per-site fix)
+bunx @fagnersales/convex-doctor --only AWAIT_IN_LOOP --json --limit 25
 
 # 3. the loop recipe itself, for the agent to self-orient
 bunx @fagnersales/convex-doctor agent-guide
 ```
 
-`groups --json` returns `{ done, groupCount, remaining, groups[] }`. Each group carries `code`, `severity`, `count`, `files`, `priority`, and an **`autofix`** capability tag telling the agent how hard to think:
+`groups --json` returns `{ done, groupCount, remaining, groups[] }`; each entry is just `code`, `severity`, `count`, `files`, and an **`autofix`** capability tag telling the agent how hard to think:
 
 | `autofix` | Meaning |
 | --- | --- |
@@ -137,7 +139,7 @@ bunx @fagnersales/convex-doctor agent-guide
 | `guided` | A deterministic recipe, but the agent must read local context (the field's schema type, the loop body, the query chain) to write it. |
 | `manual` | Architectural / cross-file / data-migration judgment. Reason carefully; may need to ask. |
 
-`--only <code|category>` emits just that group's issues with the full per-issue payload (`message`, `why`, `fixCode`, `pointerLine/Column/Length`, `docUrl`) and re-summarizes so the headline and exit code reflect only the selected group — re-run it after editing to **verify the group is clean before committing**.
+`--only <CODE> --json` returns a compact work-list — `{ total, returned, remaining, rule, sites[] }` — with the shared recipe (`why`, `fix`, `docUrl`, `autofix`) emitted **once** under `rule`, and each `site` carrying only its `file`, `line`, `function`, `message`, optional concise `fixCode`, and a `pointer`. It's capped at `--limit` (default 20; `0` = all), so even a 455-site group stays small. **Re-scanning is the cursor:** fix the batch, re-run the same command, and the fixed sites are gone — the next batch comes back. Loop until `total` is 0, then commit the group.
 
 In Claude Code, the [`/convex-fix`](skills/convex-fix/SKILL.md) skill drives this whole loop end to end.
 

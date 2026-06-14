@@ -5,6 +5,7 @@ import {
   reportJson,
   reportGroupsText,
   reportGroupsJson,
+  reportOnlyJson,
   summarize,
   exitCode,
 } from "./report.ts";
@@ -16,6 +17,8 @@ interface CliOptions extends RunOptions {
   deadOnly?: boolean;
   /** Restrict the report to a single rule code or category (the agentic group). */
   only?: string;
+  /** Cap the issues/sites emitted (0 = all). Keeps an agent's context bounded. */
+  limit?: number;
 }
 
 function parseArgs(argv: string[]): CliOptions {
@@ -49,6 +52,15 @@ function parseArgs(argv: string[]): CliOptions {
       case "--only":
         opts.only = argv[++i];
         break;
+      case "--limit": {
+        const n = Number(argv[++i]);
+        if (!Number.isInteger(n) || n < 0) {
+          console.error("--limit expects a non-negative integer (0 = no limit).");
+          process.exit(2);
+        }
+        opts.limit = n;
+        break;
+      }
       case "--no-lint":
         opts.lint = false;
         break;
@@ -102,6 +114,12 @@ Options:
   --schema <path>          Path to schema.ts. Default: <convex-dir>/schema.ts
   --only <code|category>   Restrict the report to one rule code (e.g. AWAIT_IN_LOOP)
                            or category (e.g. performance) — the agentic unit of work.
+                           With --json this emits a compact work-list (shared
+                           recipe once + per-site fixCode), capped at --limit.
+  --limit <n>              Cap emitted issues/sites (0 = all). Default for the
+                           --only --json work-list is 50, so a big group can't
+                           flood an agent's context — fix the batch, re-scan,
+                           the next call returns the next batch.
   --include-unanalyzed     Print INFO entries for handlers that couldn't be statically analyzed
   --json                   Emit JSON instead of text
   --strict                 Exit nonzero if any warnings are present
@@ -147,15 +165,18 @@ LOOP
        guided     — deterministic recipe; read the handler/schema context first.
        manual     — architectural/judgment; reason carefully, ask if unsure.
 
-  3. Load that group's work list:
-       convex-doctor --only <CODE> --json
-     Each issue carries filePath, line, function, message, why, fix, fixCode
-     (before/after/add/remove), pointerLine/Column/Length, docUrl. Fix every site.
+  3. Load a BOUNDED batch of that group's sites (default 50; lower it for big
+     groups so you don't flood context):
+       convex-doctor --only <CODE> --json --limit 25
+     Response: { total, returned, remaining, rule, sites[] }. "rule" carries the
+     shared recipe ONCE (why, fix, docUrl, autofix); each site has file, line,
+     function, message, fixCode, pointer. Fix every site in the batch.
 
-  4. VERIFY — re-scan the same group:
-       convex-doctor --only <CODE> --json
-     Its issue list must be empty before you continue. Re-running also surfaces
-     any NEW issue your edit introduced.
+  4. VERIFY / advance — re-scan the same group:
+       convex-doctor --only <CODE> --json --limit 25
+     Re-scanning is the cursor: the sites you fixed are gone, so this returns the
+     NEXT batch (and surfaces any NEW issue your edits introduced). Repeat 3–4
+     until "total" reaches 0 — only then is the group done.
 
   5. GREEN-GATE — run the project's own checks (whatever it uses), e.g.:
        bun run typecheck     (or tsc --noEmit, or the project lint/test step)
@@ -219,6 +240,23 @@ if (opts.only) {
   );
   result.issues = filtered;
   result.summary = summarize(filtered, result.scannedFunctions);
+
+  // The agentic path: a compact, capped work-list instead of the full report.
+  if (opts.format === "json") {
+    process.stdout.write(
+      reportOnlyJson(filtered, result.scannedFunctions, {
+        limit: opts.limit,
+        convexDir: opts.convexDir,
+      }) + "\n",
+    );
+    process.exit(exitCode(result, opts.strict));
+  }
+}
+
+// `--limit` on the text/standard report caps the rendered issues; the summary
+// (computed above / by run()) still reflects the true totals.
+if (opts.limit && opts.limit > 0) {
+  result.issues = result.issues.slice(0, opts.limit);
 }
 
 if (opts.deadOnly) {
