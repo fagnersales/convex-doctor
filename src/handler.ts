@@ -980,12 +980,45 @@ function classifyExpression(expr: Expression | Block, scope: Scope): ReturnInten
  * Handle `<arr>.map(arrowFn)` directly — recurse into the callback body and
  * wrap as `literalArray`. Returns null if `call` isn't a `.map` call.
  */
+/** Resolve a named `.map(fn)` callback identifier to its function declaration
+ *  (a `const fn = (x) => ...` / `function fn(x) {...}`, incl. across imports). */
+function resolveMapCallback(node: Identifier): Node | null {
+  let defs: Node[] = [];
+  try {
+    defs = node.getDefinitionNodes();
+  } catch {
+    defs = [];
+  }
+  for (const d of defs) {
+    if (Node.isFunctionDeclaration(d) && d.getBody()) return d;
+    if (Node.isVariableDeclaration(d)) {
+      const init = d.getInitializer();
+      if (init && (Node.isArrowFunction(init) || Node.isFunctionExpression(init))) return init;
+    }
+  }
+  return null;
+}
+
 function tryClassifyMapCall(call: CallExpression, scope: Scope): ReturnIntent | null {
   const expr = call.getExpression();
   if (!Node.isPropertyAccessExpression(expr) || expr.getName() !== "map") return null;
-  const arg = call.getArguments()[0];
-  if (!arg) return null;
-  if (!Node.isArrowFunction(arg) && !Node.isFunctionExpression(arg)) return null;
+  const arg0 = call.getArguments()[0];
+  if (!arg0) return null;
+  // `.map(namedProjection)` — follow the named function reference to its body so
+  // a projection like `rows.map(toFileSummary)` (which strips fields) is diffed
+  // as its real subset shape, not the raw row. (Found running on openchat.)
+  let arg: Node = arg0;
+  if (Node.isIdentifier(arg)) {
+    const resolved = resolveMapCallback(arg);
+    if (resolved) arg = resolved;
+  }
+  if (
+    !Node.isArrowFunction(arg) &&
+    !Node.isFunctionExpression(arg) &&
+    !(Node.isFunctionDeclaration(arg) && arg.getBody())
+  ) {
+    return null;
+  }
 
   // Build sub-scope: bind callback param to row<T> if receiver is rows<T>.
   const subScope: Scope = {

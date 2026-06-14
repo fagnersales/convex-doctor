@@ -476,16 +476,22 @@ function diffRowAgainstObject(
       }
       if (hasUnresolvedSpread) continue; // spread might cover this real column
       const after = fieldSource(k, v);
+      // A REQUIRED schema field is always present on the returned doc, so an
+      // omitting validator ALWAYS throws → error. An OPTIONAL field is only
+      // present when some mutation wrote it, so this throws only when populated →
+      // warn (ccv can't prove, without whole-program write analysis, that the
+      // field is ever set). This split keeps the bulk of raw-doc-vs-subset
+      // findings honest instead of crying error on never-populated optionals.
       issues.push(
         makeIssue("MISSING_FIELD", {
-          severity: "error",
+          severity: v.optional ? "warn" : "error",
           filePath: fn.filePath,
           line: fn.returnsValidatorLine,
           function: fn.exportName,
           table: intent.table,
-          message: `Validator is missing field "${k}" present on table "${intent.table}"${
-            v.optional ? " (optional)" : ""
-          }`,
+          message: v.optional
+            ? `Validator omits optional field "${k}" from table "${intent.table}" — throws if the handler ever returns a doc where it's set`
+            : `Validator is missing field "${k}" present on table "${intent.table}"`,
           fixCode: after ? { add: after } : undefined,
         }),
       );

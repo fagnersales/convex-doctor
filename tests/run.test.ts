@@ -38,12 +38,25 @@ describe("clean fixture", () => {
 });
 
 describe("missing field (R1)", () => {
-  test("flags missing schema fields in returns validator", () => {
+  test("flags a missing REQUIRED schema field as an error", () => {
     const { codes, issues } = go("missing-field");
     expect(codes).toContain("MISSING_FIELD");
-    const missing = issues.find((i) => i.code === "MISSING_FIELD")!;
-    expect(missing.message).toContain("cachedAvailableBalance");
-    expect(missing.severity).toBe("error");
+    const req = issues.find(
+      (i) => i.code === "MISSING_FIELD" && i.message.includes("isActive"),
+    )!;
+    expect(req).toBeDefined();
+    expect(req.severity).toBe("error");
+  });
+  // A missing OPTIONAL field only throws when that field is actually populated,
+  // so it's a warning (potential), not a definite error. (Reclassified after the
+  // new-apps corpus run flagged piles of never-populated optionals as errors.)
+  test("flags a missing OPTIONAL schema field as a warning", () => {
+    const { issues } = go("missing-field");
+    const opt = issues.find(
+      (i) => i.code === "MISSING_FIELD" && i.message.includes("cachedAvailableBalance"),
+    )!;
+    expect(opt).toBeDefined();
+    expect(opt.severity).toBe("warn");
   });
 });
 
@@ -718,7 +731,9 @@ describe("field-precise pointers (A4)", () => {
 
 describe("fix synthesis is ref-safe (A5)", () => {
   test("MISSING_FIELD with a renderable schema shape carries a fixCode", () => {
-    const m = go("missing-field").issues.find((i) => i.code === "MISSING_FIELD")!;
+    const m = go("missing-field").issues.find(
+      (i) => i.code === "MISSING_FIELD" && i.message.includes("cachedAvailableBalance"),
+    )!;
     expect(m.fixCode?.add).toContain("cachedAvailableBalance");
   });
   test("unresolved imported field shape → NO garbage fixCode", () => {

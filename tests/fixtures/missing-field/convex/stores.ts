@@ -1,7 +1,9 @@
 import { v } from "convex/values";
 import { query } from "./_generated/server";
 
-// Validator missing `cachedAvailableBalance` — classic drift bug.
+// Validator omits two schema fields the handler returns (it returns the raw doc):
+//  - `isActive` (REQUIRED)  → always present → ALWAYS throws → error
+//  - `cachedAvailableBalance` (OPTIONAL) → throws only when set → warn
 export const getStore = query({
   args: { storeId: v.id("stores") },
   returns: v.union(
@@ -10,7 +12,6 @@ export const getStore = query({
       _creationTime: v.number(),
       name: v.string(),
       ownerId: v.id("users"),
-      isActive: v.boolean(),
     }),
     v.null(),
   ),
