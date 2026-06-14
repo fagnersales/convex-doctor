@@ -1,10 +1,12 @@
 import { describe, test, expect } from "bun:test";
 import { run } from "../src/scan.ts";
-import type { Issue, RunOptions } from "../src/types.ts";
+import { reportJson, reportText, summarize } from "../src/report.ts";
+import { RULE_META } from "../src/rules.ts";
+import type { Issue, IssueCode, RunOptions } from "../src/types.ts";
 
 const FIX = new URL("./fixtures/", import.meta.url).pathname;
 
-function go(fixture: string): { issues: Issue[]; codes: string[] } {
+function runFix(fixture: string) {
   const opts: RunOptions = {
     convexDir: `${FIX}${fixture}/convex`,
     schemaPath: undefined,
@@ -12,8 +14,20 @@ function go(fixture: string): { issues: Issue[]; codes: string[] } {
     format: "text",
     strict: false,
   };
-  const r = run(opts);
+  return run(opts);
+}
+
+function go(fixture: string): { issues: Issue[]; codes: string[] } {
+  const r = runFix(fixture);
   return { issues: r.issues, codes: r.issues.map((i) => i.code) };
+}
+
+/** Issues for a single function within a fixture. */
+function fnIssues(fixture: string, fn: string): Issue[] {
+  return go(fixture).issues.filter((i) => i.function === fn);
+}
+function fnErrors(fixture: string, fn: string): Issue[] {
+  return fnIssues(fixture, fn).filter((i) => i.severity === "error");
 }
 
 describe("clean fixture", () => {
@@ -90,12 +104,13 @@ describe("optionality mismatch (R3)", () => {
 });
 
 describe("stale field (R2)", () => {
-  test("warns about validator field not in schema", () => {
+  test("flags a required validator field not in schema as an error (it throws)", () => {
     const { codes, issues } = go("stale-field");
     expect(codes).toContain("STALE_FIELD");
     const stale = issues.find((i) => i.code === "STALE_FIELD")!;
     expect(stale.message).toContain("legacyField");
-    expect(stale.severity).toBe("warn");
+    // A required stale field provably throws ReturnsValidationError, so error.
+    expect(stale.severity).toBe("error");
   });
 });
 
@@ -323,5 +338,340 @@ describe("ctx.storage.generateUploadUrl + JSON.stringify", () => {
       (i) => i.code === "TYPE_MISMATCH" && i.function === "badJson",
     );
     expect(tm.length).toBeGreaterThan(0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Realistic-pattern harness coverage + false-positive guards
+// ─────────────────────────────────────────────────────────────────────────
+
+describe("null-narrowing guard (C1/C3)", () => {
+  test("`if (!x) throw; return x` does NOT fire NULL_BRANCH_MISSING", () => {
+    expect(fnIssues("null-narrowing", "getThrow")).toEqual([]);
+  });
+  test("`if (x === null) throw; return x` narrows too", () => {
+    expect(fnIssues("null-narrowing", "getEqNull")).toEqual([]);
+  });
+  test("`{ ...narrowedRow }` spread is non-null (C3)", () => {
+    expect(fnIssues("null-narrowing", "getSpread")).toEqual([]);
+  });
+  test("explicit `return null` path STILL fires NULL_BRANCH_MISSING (guard)", () => {
+    expect(fnIssues("null-narrowing", "getReturnNull").map((i) => i.code)).toContain(
+      "NULL_BRANCH_MISSING",
+    );
+  });
+  test("non-exiting guard does NOT narrow (guard)", () => {
+    expect(fnIssues("null-narrowing", "getNoExit").map((i) => i.code)).toContain(
+      "NULL_BRANCH_MISSING",
+    );
+  });
+  test("combined `if (!x || cond) throw` narrows x", () => {
+    expect(fnIssues("null-narrowing", "getCombined")).toEqual([]);
+  });
+  test("narrowing reaches an alias of the guarded var", () => {
+    expect(fnIssues("null-narrowing", "getAlias")).toEqual([]);
+  });
+  test("narrowing reaches a destructure-rest of the guarded var", () => {
+    expect(fnIssues("null-narrowing", "getRest")).toEqual([]);
+  });
+  test("`if (x === undefined) throw` does NOT narrow a db.get row (soundness)", () => {
+    expect(fnIssues("null-narrowing", "getStrictUndef").map((i) => i.code)).toContain(
+      "NULL_BRANCH_MISSING",
+    );
+  });
+  test("unguarded `{ ...maybeNull }` is still flagged (no silent pass)", () => {
+    expect(fnErrors("null-narrowing", "getUnguardedSpread").length).toBeGreaterThan(0);
+  });
+});
+
+describe("nullish fallback nullability (C2)", () => {
+  test("`a ?? <non-null>` → no NULL_BRANCH_MISSING", () => {
+    expect(fnIssues("nullish-fallback", "fbNonNull")).toEqual([]);
+  });
+  test("`a ?? null` → NULL_BRANCH_MISSING (guard)", () => {
+    expect(fnIssues("nullish-fallback", "fbNull").map((i) => i.code)).toContain(
+      "NULL_BRANCH_MISSING",
+    );
+  });
+  test("`a ?? <nullable>` → NULL_BRANCH_MISSING (guard)", () => {
+    expect(fnIssues("nullish-fallback", "fbNullable").map((i) => i.code)).toContain(
+      "NULL_BRANCH_MISSING",
+    );
+  });
+});
+
+describe("optionality is directional (C4)", () => {
+  test("schema-required + validator-optional is NOT an error", () => {
+    expect(fnErrors("optionality-direction", "widened")).toEqual([]);
+  });
+  test("schema-optional + validator-required IS an error", () => {
+    const opt = fnIssues("optionality-direction", "narrowed").find(
+      (i) => i.code === "OPTIONALITY_MISMATCH",
+    );
+    expect(opt).toBeDefined();
+    expect(opt!.message).toContain("opt");
+  });
+});
+
+describe("stale-field severity by optionality (C5)", () => {
+  test("an optional stale field is info, not error", () => {
+    const stale = fnIssues("stale-field-severity", "optStale").find(
+      (i) => i.code === "STALE_FIELD",
+    );
+    expect(stale).toBeDefined();
+    expect(stale!.severity).toBe("info");
+  });
+});
+
+describe("foreign-key join (B1)", () => {
+  test("ctx.db.get(row.fkId) diffs the joined table's row", () => {
+    const m = fnIssues("fk-join", "getAuthor").find((i) => i.code === "MISSING_FIELD");
+    expect(m).toBeDefined();
+    expect(m!.message).toContain("secret");
+  });
+});
+
+describe("join/enrichment adds carry real shapes (B2)", () => {
+  test("correct nested validator → clean (guard against over-reporting)", () => {
+    expect(fnErrors("join-enrich", "getTeamOk")).toEqual([]);
+  });
+  test("nested validator dropping a field → TYPE_MISMATCH on the add", () => {
+    const tm = fnIssues("join-enrich", "getTeamDrift").find((i) => i.code === "TYPE_MISMATCH");
+    expect(tm).toBeDefined();
+    expect(tm!.message).toContain("members");
+  });
+});
+
+describe("ctx.storage.getUrl is string|null (B3)", () => {
+  test("vs v.string() → TYPE_MISMATCH", () => {
+    expect(fnIssues("storage-url-null", "urlBad").map((i) => i.code)).toContain("TYPE_MISMATCH");
+  });
+  test("vs v.union(v.string(), v.null()) → clean", () => {
+    expect(fnErrors("storage-url-null", "urlOk")).toEqual([]);
+  });
+  test("`?? \"\"` strips the null → clean", () => {
+    expect(fnErrors("storage-url-null", "urlFallback")).toEqual([]);
+  });
+  test("an early-exit null guard narrows the url binding → clean", () => {
+    expect(fnErrors("storage-url-null", "urlGuard")).toEqual([]);
+  });
+});
+
+describe("direct `return result.page` (B9)", () => {
+  test("classified as rows<T> and diffed against schema", () => {
+    const m = fnIssues("paginated-page-direct", "listPage").find((i) => i.code === "MISSING_FIELD");
+    expect(m).toBeDefined();
+    expect(m!.message).toContain("secret");
+  });
+});
+
+describe("count via `.length` (B13)", () => {
+  test("`rows.length` vs v.array(...) → cardinality/type mismatch", () => {
+    expect(fnIssues("count-length", "countBad").map((i) => i.code)).toContain("TYPE_MISMATCH");
+  });
+  test("`rows.length` vs v.number() → clean", () => {
+    expect(fnErrors("count-length", "countOk")).toEqual([]);
+  });
+});
+
+describe("value-bounded literal returns (B17)", () => {
+  test("`return \"inactive\"` vs v.literal(\"active\") → TYPE_MISMATCH", () => {
+    expect(fnIssues("literal-value", "statusBad").map((i) => i.code)).toContain("TYPE_MISMATCH");
+  });
+  test("`return \"active\"` vs v.literal(\"active\") → clean", () => {
+    expect(fnErrors("literal-value", "statusOk")).toEqual([]);
+  });
+  test("`return \"x\"` vs v.string() → clean", () => {
+    expect(fnErrors("literal-value", "statusStr")).toEqual([]);
+  });
+});
+
+describe("v.optional(...) unwrapping (B18)", () => {
+  test("object inside v.optional(...) is still diffed", () => {
+    const m = fnIssues("optional-unwrap", "getOpt").find((i) => i.code === "MISSING_FIELD");
+    expect(m).toBeDefined();
+    expect(m!.message).toContain("secret");
+  });
+  test("valid primitive vs v.optional(v.string()) → clean (no false positive)", () => {
+    expect(fnErrors("optional-unwrap", "primOk")).toEqual([]);
+  });
+});
+
+describe("opaque validator-builder branch suppresses hard mismatch (C6)", () => {
+  test("v.union(doc(schema,\"t\"), v.null()) does not emit a spurious TYPE_MISMATCH", () => {
+    expect(fnErrors("doc-helper", "getStore")).toEqual([]);
+  });
+});
+
+describe("paginated envelope keys (B16)", () => {
+  test("missing isDone + continueCursor → two MISSING_FIELD", () => {
+    const missing = fnIssues("paginated-keys", "pageBad").filter((i) => i.code === "MISSING_FIELD");
+    expect(missing.map((i) => i.message).join(" ")).toContain("isDone");
+    expect(missing.map((i) => i.message).join(" ")).toContain("continueCursor");
+  });
+  test("full envelope → clean", () => {
+    expect(fnErrors("paginated-keys", "pageOk")).toEqual([]);
+  });
+});
+
+describe("satisfies expression unwrap (B22)", () => {
+  test("drift behind `satisfies Validator<...>` is still detected", () => {
+    const m = fnIssues("satisfies", "getStore").find((i) => i.code === "MISSING_FIELD");
+    expect(m).toBeDefined();
+    expect(m!.message).toContain("secret");
+  });
+});
+
+describe("diamond shared-validator ref (C9)", () => {
+  test("drift surfaces on BOTH fields that reference the same validator", () => {
+    const tm = fnIssues("diamond-ref", "getRoute").filter((i) => i.code === "TYPE_MISMATCH");
+    const fields = tm.map((i) => i.message);
+    expect(fields.some((m) => m.includes("start"))).toBe(true);
+    expect(fields.some((m) => m.includes("end"))).toBe(true);
+  });
+});
+
+describe("schema spread tables (B6)", () => {
+  test("a table from `...sharedTables` is resolved and diffed", () => {
+    const m = fnIssues("schema-spread", "getAudit").find((i) => i.code === "MISSING_FIELD");
+    expect(m).toBeDefined();
+    expect(m!.message).toContain("secret");
+  });
+});
+
+describe(".map(x => cond ? a : b) diffs BOTH branches (B11)", () => {
+  test("the else branch's extra + missing fields are flagged", () => {
+    const codes = fnIssues("realistic-followups", "mapTernary").map((i) => i.code);
+    expect(codes).toContain("EXTRA_LITERAL_FIELD");
+    expect(codes).toContain("MISSING_LITERAL_FIELD");
+  });
+});
+
+describe("fan-out join cleaned with `.filter(d => d !== null)`", () => {
+  test("null-removing filter makes the element non-null → clean", () => {
+    expect(fnErrors("realistic-followups", "fanout")).toEqual([]);
+  });
+});
+
+describe("computed string-concat enrichment field", () => {
+  test("`u.first + \" \" + u.last` is a string → flagged vs v.number()", () => {
+    const tm = fnIssues("realistic-followups", "enrich").find((i) => i.code === "TYPE_MISMATCH");
+    expect(tm).toBeDefined();
+    expect(tm!.message).toContain("fullName");
+  });
+});
+
+describe("fix suggestions never widen the schema", () => {
+  test("a literal mismatch suggests v.literal(value), not v.string()", () => {
+    const i = fnIssues("literal-value", "statusBad").find((x) => x.code === "TYPE_MISMATCH")!;
+    expect(i.fixCode?.after).toBe('v.literal("inactive")');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Rich feedback (Bucket A)
+// ─────────────────────────────────────────────────────────────────────────
+
+describe("rule metadata registry (A1)", () => {
+  test("every issue code has metadata", () => {
+    const codes: IssueCode[] = [
+      "MISSING_FIELD",
+      "STALE_FIELD",
+      "OPTIONALITY_MISMATCH",
+      "TYPE_MISMATCH",
+      "NULL_BRANCH_MISSING",
+      "CARDINALITY_MISMATCH",
+      "EXTRA_LITERAL_FIELD",
+      "MISSING_LITERAL_FIELD",
+      "UNANALYZED",
+      "ANALYZER_ERROR",
+    ];
+    for (const c of codes) {
+      expect(RULE_META[c]).toBeDefined();
+      expect(RULE_META[c].why.length).toBeGreaterThan(10);
+      expect(RULE_META[c].title.length).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe("every emitted issue carries rich fields (A3)", () => {
+  test("category + why are populated on real issues", () => {
+    const { issues } = go("type-mismatch");
+    expect(issues.length).toBeGreaterThan(0);
+    for (const i of issues) {
+      expect(i.category).toBeTruthy();
+      expect(i.why).toBeTruthy();
+      expect(i.docUrl).toBeTruthy();
+    }
+  });
+});
+
+describe("field-precise pointers (A4)", () => {
+  test("a row-diff issue points at the field line, not the `returns:` line", () => {
+    const { issues } = go("type-mismatch");
+    const fielded = issues.find((i) => i.pointerLine && i.pointerLine !== i.line);
+    expect(fielded).toBeDefined();
+  });
+});
+
+describe("fix synthesis is ref-safe (A5)", () => {
+  test("MISSING_FIELD with a renderable schema shape carries a fixCode", () => {
+    const m = go("missing-field").issues.find((i) => i.code === "MISSING_FIELD")!;
+    expect(m.fixCode?.add).toContain("cachedAvailableBalance");
+  });
+  test("unresolved imported field shape → NO garbage fixCode", () => {
+    const m = fnIssues("fix-ref-safe", "getStore").find((i) => i.code === "MISSING_FIELD")!;
+    expect(m.fixCode).toBeUndefined();
+  });
+});
+
+describe("summary + headline (A7)", () => {
+  test("headline counts only error-bearing functions as affected", () => {
+    const s = summarize(go("stale-field-severity").issues, 1);
+    // optStale only produces an info STALE_FIELD → 0 functions will throw.
+    expect(s.affectedFns).toBe(0);
+    expect(s.headline).toContain("No runtime errors");
+  });
+  test("missing-field reports 1 affected function", () => {
+    const r = runFix("missing-field");
+    expect(r.summary?.affectedFns).toBe(1);
+    expect(r.summary?.headline).toContain("ReturnsValidationError");
+  });
+});
+
+describe("enriched JSON contract (A8)", () => {
+  test("schemaVersion + summary + per-issue category are present", () => {
+    const parsed = JSON.parse(reportJson(runFix("missing-field")));
+    expect(parsed.schemaVersion).toBe(1);
+    expect(parsed.summary).toBeDefined();
+    expect(parsed.summary.byCategory).toBeDefined();
+    expect(parsed.issues[0].category).toBe("schema-drift");
+  });
+});
+
+describe("rich text formatter (A6)", () => {
+  test("clean run is a friendly one-liner", () => {
+    const text = reportText(runFix("clean"));
+    expect(text).toContain("match their returns validator");
+  });
+  test("dirty run includes why + fix + docs + caret", () => {
+    const text = reportText(runFix("type-mismatch"));
+    expect(text).toContain("why");
+    expect(text).toContain("fix");
+    expect(text).toContain("docs.convex.dev");
+    expect(text).toContain("^");
+  });
+});
+
+describe("analyzer never crashes the whole run (C10)", () => {
+  test("schema-not-found yields an ANALYZER_ERROR, not a throw", () => {
+    const r = run({
+      convexDir: `${FIX}/does-not-exist/convex`,
+      schemaPath: undefined,
+      includeUnanalyzed: false,
+      format: "text",
+      strict: false,
+    });
+    expect(r.issues.some((i) => i.code === "ANALYZER_ERROR")).toBe(true);
   });
 });

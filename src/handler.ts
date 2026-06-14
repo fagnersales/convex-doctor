@@ -13,6 +13,7 @@ import {
   type ObjectBindingPattern,
 } from "ts-morph";
 import { parseValidator } from "./validator.ts";
+import { rowShape } from "./schema.ts";
 import type { ReturnIntent, Shape, FieldShape, SchemaModel } from "./types.ts";
 
 /**
@@ -75,6 +76,14 @@ export function analyzeHandler(handler: HandlerFn, ctx: AnalyzeContext = {}): Re
  * that `a ? b : (c ? d : e)` yields `[b, d, e]`.
  */
 function expandConditionals(expr: Expression): Expression[] {
+  // Unwrap parens / casts so a wrapped ternary (`=> (cond ? a : b)`) still
+  // expands into both branches.
+  if (Node.isParenthesizedExpression(expr)) {
+    return expandConditionals(expr.getExpression() as Expression);
+  }
+  if (Node.isAsExpression(expr) || Node.isTypeAssertion(expr)) {
+    return expandConditionals(expr.getExpression() as Expression);
+  }
   if (Node.isConditionalExpression(expr)) {
     return [
       ...expandConditionals(expr.getWhenTrue() as Expression),
@@ -103,12 +112,14 @@ type VarOrigin =
   | { kind: "rowsOf"; table: string }
   | { kind: "paginatedOf"; table: string }
   | { kind: "literal"; fields: Map<string, Shape> }
-  | { kind: "literalArrayOf"; element: ReturnIntent }
+  | { kind: "literalArrayOf"; element: ReturnIntent; elements?: ReturnIntent[] }
   | { kind: "idOf"; table: string }
   /** Value-of-id — ctx.db.insert("T", ...) returns Id<"T">. */
   | { kind: "idValueOf"; table: string }
-  /** Primitive string/number/boolean from a recognised producer. */
-  | { kind: "primitive"; primitive: "string" | "number" | "boolean" }
+  /** Primitive string/number/boolean from a recognised producer. `value` is
+   *  set for literal sources (`const s = "active"`) so the matcher can check it
+   *  against a `v.literal(...)` branch; unbounded producers leave it unset. */
+  | { kind: "primitive"; primitive: "string" | "number" | "boolean"; value?: string | number | boolean }
   /** Result of a `ctx.runQuery/runMutation/runAction(internal.x.y, ...)` —
    *  carries the called function's `returns` shape. Materialises as a
    *  `passthrough` intent when used at a return site. */
@@ -142,7 +153,153 @@ function buildScope(handler: HandlerFn, ctx: AnalyzeContext): Scope {
     bindDeclaration(decl, scope);
   }
 
+  // Narrow nullable bindings guarded by an early-exit null check (C1) —
+  // `const x = await ctx.db.get(id); if (!x) throw …; return x;` is the single
+  // most common Convex idiom; without this it fires a spurious NULL_BRANCH.
+  applyNullGuards(body, scope);
+  // Re-propagate narrowing into top-level alias / destructure bindings that
+  // derive from a now-narrowed variable (`const { secret, ...rest } = u`).
+  repropagateDerivedBindings(body, scope);
+
   return scope;
+}
+
+/**
+ * Walk the handler block's *top-level* statements for early-exit null guards
+ * and flip the guarded binding(s) to non-null. Conservative on purpose:
+ *  - only top-level `if` statements (never nested in callbacks);
+ *  - only when the then-branch provably exits (throw / return);
+ *  - recognizes `!x`, `x === null`/`x == null`, loose `x == undefined`, and
+ *    disjunctions `if (!x || cond) throw` (fall-through is `!x && !cond`);
+ *  - positive guards (`if (x !== null)`) and `&&` conditions are ignored.
+ */
+function applyNullGuards(block: Block, scope: Scope): void {
+  for (const stmt of block.getStatements()) {
+    if (!Node.isIfStatement(stmt)) continue;
+    if (!thenBranchExits(stmt.getThenStatement())) continue;
+    for (const name of guardedNullNames(stmt.getExpression())) {
+      narrowNonNull(name, scope);
+    }
+  }
+}
+
+/** Flip a guarded binding to non-null — rowOf clears `nullable`, shapeOf
+ *  (e.g. ctx.storage.getUrl → string|null) strips the null union member. */
+function narrowNonNull(name: string, scope: Scope): void {
+  const info = scope.vars.get(name);
+  if (!info) return;
+  if (info.origin.kind === "rowOf" && info.origin.nullable) {
+    scope.vars.set(name, { ...info, origin: { ...info.origin, nullable: false } });
+  } else if (info.origin.kind === "shapeOf" && shapeContainsNull(info.origin.shape)) {
+    scope.vars.set(name, {
+      ...info,
+      origin: { ...info.origin, shape: stripNull(info.origin.shape) },
+    });
+  }
+}
+
+function repropagateDerivedBindings(block: Block, scope: Scope): void {
+  for (const stmt of block.getStatements()) {
+    if (!Node.isVariableStatement(stmt)) continue;
+    for (const decl of stmt.getDeclarationList().getDeclarations()) {
+      const init = decl.getInitializer();
+      // Only re-bind aliases / destructures of an existing variable — never a
+      // fresh producer (`const u = ctx.db.get(...)`), which would undo narrowing.
+      if (init && unwrapsToIdentifier(init)) bindDeclaration(decl, scope);
+    }
+  }
+}
+
+function unwrapsToIdentifier(expr: Node): boolean {
+  let e: Node = expr;
+  while (
+    Node.isAwaitExpression(e) ||
+    Node.isParenthesizedExpression(e) ||
+    Node.isAsExpression(e) ||
+    Node.isTypeAssertion(e) ||
+    Node.isNonNullExpression(e)
+  ) {
+    e = e.getExpression();
+  }
+  return Node.isIdentifier(e);
+}
+
+function thenBranchExits(stmt: Node | undefined): boolean {
+  if (!stmt) return false;
+  if (Node.isThrowStatement(stmt) || Node.isReturnStatement(stmt)) return true;
+  if (Node.isBlock(stmt)) {
+    return stmt
+      .getStatements()
+      .some((s) => Node.isThrowStatement(s) || Node.isReturnStatement(s));
+  }
+  return false;
+}
+
+/** Names provably non-null on the fall-through of an early-exit guard. */
+function guardedNullNames(cond: Node): string[] {
+  if (Node.isParenthesizedExpression(cond)) return guardedNullNames(cond.getExpression());
+  // `!x`
+  if (
+    Node.isPrefixUnaryExpression(cond) &&
+    cond.getOperatorToken() === SyntaxKind.ExclamationToken
+  ) {
+    const operand = cond.getOperand();
+    return Node.isIdentifier(operand) ? [operand.getText()] : [];
+  }
+  if (Node.isBinaryExpression(cond)) {
+    const op = cond.getOperatorToken().getText();
+    // `if (A || B) exit` → fall-through is `!A && !B` → narrow both sides.
+    // (`&&` is intentionally NOT handled — `if (A && B) exit` proves neither.)
+    if (op === "||") {
+      return [...guardedNullNames(cond.getLeft()), ...guardedNullNames(cond.getRight())];
+    }
+    if (op === "===" || op === "==") {
+      const left = cond.getLeft();
+      const right = cond.getRight();
+      const id = Node.isIdentifier(left) ? left : Node.isIdentifier(right) ? right : null;
+      const lit = Node.isIdentifier(left) ? right : left;
+      if (id && isNarrowingNullCompare(op, lit)) return [id.getText()];
+    }
+  }
+  return [];
+}
+
+/**
+ * True when `<id> <op> <lit>` proves the id non-null on fall-through. `null`
+ * comparisons always count. A strict `=== undefined` does NOT — `.first()`,
+ * `.unique()` and `ctx.db.get()` return `T | null` (never `undefined`), so the
+ * guard can never fire for a missing doc; treating it as narrowing would hide
+ * a real null return (soundness). Loose `== undefined` matches null too.
+ */
+function isNarrowingNullCompare(op: string, lit: Node): boolean {
+  if (lit.getKind() === SyntaxKind.NullKeyword) return true;
+  if (Node.isIdentifier(lit) && lit.getText() === "undefined") return op === "==";
+  return false;
+}
+
+function isNullishLiteral(n: Node): boolean {
+  return (
+    n.getKind() === SyntaxKind.NullKeyword ||
+    (Node.isIdentifier(n) && n.getText() === "undefined")
+  );
+}
+
+/** True when an expression is unambiguously a string (so `x + <this>` is concat).
+ *  Recurses through `+` so a nested literal (`u.first + " " + u.last`, which
+ *  parses as `(u.first + " ") + u.last`) is recognized. */
+function isStringish(n: Node): boolean {
+  if (
+    Node.isStringLiteral(n) ||
+    Node.isTemplateExpression(n) ||
+    Node.isNoSubstitutionTemplateLiteral(n)
+  ) {
+    return true;
+  }
+  if (Node.isParenthesizedExpression(n)) return isStringish(n.getExpression());
+  if (Node.isBinaryExpression(n) && n.getOperatorToken().getText() === "+") {
+    return isStringish(n.getLeft()) || isStringish(n.getRight());
+  }
+  return false;
 }
 
 function collectOwnVariableDeclarations(block: Block): VariableDeclaration[] {
@@ -212,14 +369,19 @@ function inferOrigin(expr: Expression, scope: Scope): VarOrigin {
     return inner;
   }
 
-  // primitive literals — `const x = 0`, `const s = "hello"`, etc.
-  if (Node.isStringLiteral(expr)) return { kind: "primitive", primitive: "string" };
-  if (Node.isNumericLiteral(expr)) return { kind: "primitive", primitive: "number" };
-  if (
-    expr.getKind() === SyntaxKind.TrueKeyword ||
-    expr.getKind() === SyntaxKind.FalseKeyword
-  ) {
-    return { kind: "primitive", primitive: "boolean" };
+  // primitive literals — `const x = 0`, `const s = "hello"`, etc. Carry the
+  // value so a value-bounded const checks against `v.literal(...)` (B17).
+  if (Node.isStringLiteral(expr)) {
+    return { kind: "primitive", primitive: "string", value: expr.getLiteralValue() };
+  }
+  if (Node.isNumericLiteral(expr)) {
+    return { kind: "primitive", primitive: "number", value: Number(expr.getLiteralValue()) };
+  }
+  if (expr.getKind() === SyntaxKind.TrueKeyword) {
+    return { kind: "primitive", primitive: "boolean", value: true };
+  }
+  if (expr.getKind() === SyntaxKind.FalseKeyword) {
+    return { kind: "primitive", primitive: "boolean", value: false };
   }
 
   // array literal — `const arr = []` or `const arr = [...]`
@@ -235,6 +397,11 @@ function inferOrigin(expr: Expression, scope: Scope): VarOrigin {
       kind: "literalArrayOf",
       element: classifyExpression(first as Expression, scope),
     };
+  }
+
+  // Template literal → string (`\`${a} ${b}\``). Unambiguous.
+  if (Node.isTemplateExpression(expr) || Node.isNoSubstitutionTemplateLiteral(expr)) {
+    return { kind: "primitive", primitive: "string" };
   }
 
   // identifier reference — look up in scope
@@ -278,18 +445,58 @@ function inferOrigin(expr: Expression, scope: Scope): VarOrigin {
     return { kind: "literal", fields: literalFields(expr, scope) };
   }
 
-  // ?? null fallback: `await ctx.db.get(id) ?? null` → still nullable rowOf
   if (Node.isBinaryExpression(expr)) {
     const op = expr.getOperatorToken().getText();
+    // `a ?? b` / `a || b` — nullability comes from the RHS (C2). Mirrors the
+    // classifyExpression path for const-bound `const x = get(id) ?? fallback!`.
     if (op === "??" || op === "||") {
       const left = inferOrigin(expr.getLeft(), scope);
-      // if right is null literal, just return left (already nullable for get)
-      if (left.kind === "rowOf") return { ...left, nullable: true };
+      const rightNullable = exprIsNullable(expr.getRight() as Expression, scope);
+      if (left.kind === "rowOf") return { ...left, nullable: rightNullable };
+      if (left.kind === "shapeOf" && !rightNullable) {
+        return { ...left, shape: stripNull(left.shape) };
+      }
       return left;
+    }
+    // Arithmetic / string-concat — only when the operator makes the result type
+    // unambiguous (avoids guessing on opaque `a + b` with unknown operands).
+    if (op === "-" || op === "*" || op === "/" || op === "%") {
+      return { kind: "primitive", primitive: "number" };
+    }
+    if (op === "+" && (isStringish(expr.getLeft()) || isStringish(expr.getRight()))) {
+      return { kind: "primitive", primitive: "string" };
     }
   }
 
   return { kind: "unknown", expr: expr.getText().slice(0, 80) };
+}
+
+/** True when an expression can evaluate to null/undefined (best-effort). Used
+ *  to derive the nullability of a `??`/`||` result from its RHS. */
+function exprIsNullable(expr: Expression, scope: Scope): boolean {
+  if (Node.isNonNullExpression(expr)) return false; // `x!` is non-null
+  if (isNullishLiteral(expr)) return true;
+  const c = classifyExpression(expr, scope);
+  if (c.kind === "null") return true;
+  if (c.kind === "row" && c.nullable) return true;
+  if (c.kind === "passthrough") return shapeContainsNull(c.shape);
+  return false;
+}
+
+function shapeContainsNull(shape: Shape): boolean {
+  if (shape.kind === "null") return true;
+  if (shape.kind === "union") return shape.members.some(shapeContainsNull);
+  if (shape.kind === "optional") return true;
+  return false;
+}
+
+/** Remove the `null` member from a union shape (used by `?? non-null`). */
+function stripNull(shape: Shape): Shape {
+  if (shape.kind !== "union") return shape;
+  const members = shape.members.filter((m) => m.kind !== "null");
+  if (members.length === 0) return shape;
+  if (members.length === 1) return members[0]!;
+  return { kind: "union", members };
 }
 
 function originFromCall(call: CallExpression, scope: Scope): VarOrigin {
@@ -347,10 +554,15 @@ function originFromCall(call: CallExpression, scope: Scope): VarOrigin {
     ) {
       return { kind: "primitive", primitive: "string" };
     }
-    // ctx.storage.getUrl(id) → string | null (we surface as string for now;
-    // matcher's null branch isn't checked unless caller awaits direct).
+    // ctx.storage.getUrl(id) → string | null. The url is null when the storage
+    // id is missing, so the validator must allow null (B3). `?? fallback` /
+    // direct non-null narrowing strips the null member upstream.
     if (method === "getUrl" && receiverText(receiver) === "ctx.storage") {
-      return { kind: "primitive", primitive: "string" };
+      return {
+        kind: "shapeOf",
+        shape: { kind: "union", members: [{ kind: "string" }, { kind: "null" }] },
+        from: "ctx.storage.getUrl",
+      };
     }
 
     // JSON.stringify(...) → string
@@ -363,7 +575,21 @@ function originFromCall(call: CallExpression, scope: Scope): VarOrigin {
     }
 
     // .filter(...) / .slice(...) / .sort(...) — preserve receiver cardinality.
-    if (method === "filter" || method === "slice" || method === "sort") {
+    // A null-removing `.filter(u => u !== null)` / `.filter(Boolean)` makes the
+    // array element non-null (the canonical fan-out-join cleanup).
+    if (method === "filter") {
+      const recvOrigin = inferOrigin(receiver, scope);
+      const pred = call.getArguments()[0];
+      if (
+        pred &&
+        isNullRemovingPredicate(pred) &&
+        recvOrigin.kind === "literalArrayOf"
+      ) {
+        return { kind: "literalArrayOf", element: stripIntentNull(recvOrigin.element) };
+      }
+      return recvOrigin;
+    }
+    if (method === "slice" || method === "sort") {
       return inferOrigin(receiver, scope);
     }
 
@@ -387,7 +613,7 @@ function originFromCall(call: CallExpression, scope: Scope): VarOrigin {
     if (method === "map") {
       const mapped = tryClassifyMapCall(call, scope);
       if (mapped && mapped.kind === "literalArray") {
-        return { kind: "literalArrayOf", element: mapped.element };
+        return { kind: "literalArrayOf", element: mapped.element, elements: mapped.elements };
       }
       // Fallback: if the callback didn't classify (e.g. inline lambda body
       // we can't follow), preserve receiver's cardinality so downstream
@@ -400,6 +626,60 @@ function originFromCall(call: CallExpression, scope: Scope): VarOrigin {
   }
 
   return { kind: "unknown", expr: call.getText().slice(0, 80) };
+}
+
+/** True for predicates that remove null/undefined elements: `Boolean`,
+ *  `u => u`, `u => !!u`, `u => Boolean(u)`, `u => u !== null`, `u => u != null`. */
+function isNullRemovingPredicate(pred: Node): boolean {
+  if (Node.isIdentifier(pred)) return pred.getText() === "Boolean";
+  if (!Node.isArrowFunction(pred) && !Node.isFunctionExpression(pred)) return false;
+  const param = pred.getParameters()[0];
+  if (!param) return false;
+  const pName = param.getName();
+  let body: Node | undefined = pred.getBody();
+  if (Node.isBlock(body)) {
+    const rets = body.getStatements().filter(Node.isReturnStatement);
+    if (rets.length !== 1) return false;
+    body = rets[0]!.getExpression();
+  }
+  if (!body) return false;
+  // `u`
+  if (Node.isIdentifier(body)) return body.getText() === pName;
+  // `!!u`
+  if (Node.isPrefixUnaryExpression(body) && body.getOperatorToken() === SyntaxKind.ExclamationToken) {
+    const inner = body.getOperand();
+    if (
+      Node.isPrefixUnaryExpression(inner) &&
+      inner.getOperatorToken() === SyntaxKind.ExclamationToken &&
+      Node.isIdentifier(inner.getOperand()) &&
+      inner.getOperand().getText() === pName
+    ) {
+      return true;
+    }
+  }
+  // `Boolean(u)`
+  if (Node.isCallExpression(body)) {
+    const e = body.getExpression();
+    if (Node.isIdentifier(e) && e.getText() === "Boolean") return true;
+  }
+  // `u !== null` / `u != null` / `u !== undefined`
+  if (Node.isBinaryExpression(body)) {
+    const op = body.getOperatorToken().getText();
+    if (op === "!==" || op === "!=") {
+      const l = body.getLeft();
+      const r = body.getRight();
+      const idIsParam = (n: Node) => Node.isIdentifier(n) && n.getText() === pName;
+      if ((idIsParam(l) && isNullishLiteral(r)) || (idIsParam(r) && isNullishLiteral(l))) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function stripIntentNull(intent: ReturnIntent): ReturnIntent {
+  if (intent.kind === "row" && intent.nullable) return { ...intent, nullable: false };
+  return intent;
 }
 
 /** Walk left through `.foo().bar().baz()` chain looking for `.query("T")`. */
@@ -432,17 +712,28 @@ function receiverText(node: Node): string {
 }
 
 function inferTableFromIdArg(arg: Node, scope: Scope): string | null {
-  // case: `args.foo` where args validator declares foo as v.id("T")
   if (Node.isPropertyAccessExpression(arg)) {
     const recv = arg.getExpression();
+    const fieldName = arg.getName();
+    // case: `args.foo` where args validator declares foo as v.id("T")
     if (
       Node.isIdentifier(recv) &&
       scope.argsParamName === recv.getText() &&
       scope.argsShape
     ) {
-      const fieldName = arg.getName();
       const fs = scope.argsShape.get(fieldName);
       if (fs && fs.shape.kind === "id") return fs.shape.table;
+    }
+    // case: `row.fkId` — foreign-key join. `row` is a rowOf<T>, `fkId` is a
+    // v.id("U") field on T, so `ctx.db.get(row.fkId)` reads table U (B1).
+    if (Node.isIdentifier(recv)) {
+      const info = scope.vars.get(recv.getText());
+      if (info?.origin.kind === "rowOf") {
+        if (fieldName === "_id") return info.origin.table;
+        const tbl = scope.schema?.tables.get(info.origin.table);
+        const fs = tbl?.fields.get(fieldName);
+        if (fs && fs.shape.kind === "id") return fs.shape.table;
+      }
     }
   }
   // case: `id` where `const id = args.foo` was bound earlier
@@ -534,11 +825,18 @@ function classifyExpression(expr: Expression | Block, scope: Scope): ReturnInten
   if (expr.getKind() === SyntaxKind.NullKeyword) return { kind: "null" };
   if (Node.isIdentifier(expr) && expr.getText() === "undefined") return { kind: "null" };
 
-  // primitive literals
-  if (Node.isStringLiteral(expr)) return { kind: "primitive", primitive: "string" };
-  if (Node.isNumericLiteral(expr)) return { kind: "primitive", primitive: "number" };
-  if (expr.getKind() === SyntaxKind.TrueKeyword || expr.getKind() === SyntaxKind.FalseKeyword) {
-    return { kind: "primitive", primitive: "boolean" };
+  // primitive literals — carry the literal value (B17).
+  if (Node.isStringLiteral(expr)) {
+    return { kind: "primitive", primitive: "string", value: expr.getLiteralValue() };
+  }
+  if (Node.isNumericLiteral(expr)) {
+    return { kind: "primitive", primitive: "number", value: Number(expr.getLiteralValue()) };
+  }
+  if (expr.getKind() === SyntaxKind.TrueKeyword) {
+    return { kind: "primitive", primitive: "boolean", value: true };
+  }
+  if (expr.getKind() === SyntaxKind.FalseKeyword) {
+    return { kind: "primitive", primitive: "boolean", value: false };
   }
 
   // Array literal `[...]` — treat as literalArray of first element. Empty
@@ -556,17 +854,17 @@ function classifyExpression(expr: Expression | Block, scope: Scope): ReturnInten
     return { kind: "literalArray", element: classifyExpression(first as Expression, scope) };
   }
 
-  // ?? null fallback
+  // `a ?? b` / `a || b` — the result is null only when the RHS can be null, so
+  // the nullability comes from the RHS, not the LHS (C2). `doc ?? fallback!`
+  // is non-null; `doc ?? null` and `docA ?? docB` (both nullable) stay nullable.
   if (Node.isBinaryExpression(expr)) {
     const op = expr.getOperatorToken().getText();
     if (op === "??" || op === "||") {
       const left = classifyExpression(expr.getLeft() as Expression, scope);
-      const right = expr.getRight();
-      const isNullRight =
-        right.getKind() === SyntaxKind.NullKeyword ||
-        (Node.isIdentifier(right) && right.getText() === "undefined");
-      if (left.kind === "row" && isNullRight) {
-        return { ...left, nullable: true };
+      const rightNullable = exprIsNullable(expr.getRight() as Expression, scope);
+      if (left.kind === "row") return { ...left, nullable: rightNullable };
+      if (left.kind === "passthrough" && !rightNullable) {
+        return { ...left, shape: stripNull(left.shape) };
       }
       return left;
     }
@@ -650,30 +948,37 @@ function tryClassifyMapCall(call: CallExpression, scope: Scope): ReturnIntent | 
   }
 
   const body = arg.getBody();
-  let elementIntent: ReturnIntent;
+  let collected: ReturnIntent[];
   if (Node.isBlock(body)) {
     const rets = collectReturnStatements(body);
     if (rets.length === 0) return null;
-    // Multiple returns — common pattern: `if (skip) return null; return {...}`
-    // followed by `.filter(non-null)`. Prefer the first non-null intent so we
-    // describe the array's "real" payload; fall back to null if all returns
-    // are null/undefined (rare, validator should declare v.null() then).
-    const intents: ReturnIntent[] = [];
+    collected = [];
     for (const ret of rets) {
       const expr = ret.getExpression();
       if (!expr) continue;
       for (const branch of expandConditionals(expr)) {
-        intents.push(classifyExpression(branch, subScope));
+        collected.push(classifyExpression(branch, subScope));
       }
     }
-    if (intents.length === 0) return null;
-    const nonNull = intents.find((i) => i.kind !== "null");
-    elementIntent = nonNull ?? intents[0]!;
   } else {
-    elementIntent = classifyExpression(body as Expression, subScope);
+    // Expression body — expand `x => cond ? a : b` into both element shapes.
+    collected = expandConditionals(body as Expression).map((b) =>
+      classifyExpression(b, subScope),
+    );
   }
+  if (collected.length === 0) return null;
 
-  return { kind: "literalArray", element: elementIntent };
+  // `if (skip) return null; return {...}` + downstream `.filter(Boolean)` is
+  // common: prefer the non-null payload(s), but if every branch is null keep
+  // them so an all-null map is still surfaced. When more than one distinct
+  // non-null shape survives (e.g. `cond ? a : b`), diff every one (B11).
+  const meaningful = collected.filter((i) => i.kind !== "null");
+  const elements = dedupeIntents(meaningful.length > 0 ? meaningful : collected);
+  return {
+    kind: "literalArray",
+    element: elements[0]!,
+    elements: elements.length > 1 ? elements : undefined,
+  };
 }
 
 /**
@@ -769,6 +1074,21 @@ function classifyPropertyAccess(
     }
   }
 
+  // <paginatedOf<T>>.page → rows<T> (direct `return result.page`, B9).
+  if (Node.isIdentifier(recv)) {
+    const info = scope.vars.get(recv.getText());
+    if (info?.origin.kind === "paginatedOf" && fieldName === "page") {
+      return { kind: "rows", table: info.origin.table, drop: new Set(), add: new Map() };
+    }
+    // <rows<T>>.length / <literalArray>.length → number (count query, B13).
+    if (
+      fieldName === "length" &&
+      (info?.origin.kind === "rowsOf" || info?.origin.kind === "literalArrayOf")
+    ) {
+      return { kind: "primitive", primitive: "number" };
+    }
+  }
+
   // <rowOf<T>>.<field>
   if (Node.isIdentifier(recv)) {
     const info = scope.vars.get(recv.getText());
@@ -808,13 +1128,13 @@ function originToIntent(
     case "literal":
       return { kind: "literal", fields: origin.fields };
     case "literalArrayOf":
-      return { kind: "literalArray", element: origin.element };
+      return { kind: "literalArray", element: origin.element, elements: origin.elements };
     case "idOf":
       return { kind: "unanalyzed", reason: `returning bare id<${origin.table}>` };
     case "idValueOf":
       return { kind: "idValue", table: origin.table };
     case "primitive":
-      return { kind: "primitive", primitive: origin.primitive };
+      return { kind: "primitive", primitive: origin.primitive, value: origin.value };
     case "shapeOf":
       return { kind: "passthrough", shape: origin.shape, from: origin.from };
     case "param":
@@ -855,13 +1175,16 @@ function classifyObjectLiteral(obj: ObjectLiteralExpression, scope: Scope): Retu
       if (name === "page" && init) {
         pageOverride = classifyExpression(init as Expression, scope);
       }
-      literalFieldsMap.set(name, init ? initShapeOf(init, scope) : { kind: "any" });
+      literalFieldsMap.set(name, init ? addShapeOf(init, scope) : { kind: "any" });
     } else if (Node.isShorthandPropertyAssignment(prop)) {
       const name = prop.getName();
       if (name === "page") {
         pageOverride = classifyVar(name, scope);
       }
-      literalFieldsMap.set(name, { kind: "any" });
+      const info = scope.vars.get(name);
+      const shape: Shape =
+        info && !info.drop ? shapeFromOrigin(info.origin, scope) ?? { kind: "any" } : { kind: "any" };
+      literalFieldsMap.set(name, shape);
     }
   }
 
@@ -879,6 +1202,10 @@ function classifyObjectLiteral(obj: ObjectLiteralExpression, scope: Scope): Retu
         pageOverride,
       };
     }
+    // Note: a *guarded* nullable row is already narrowed to non-null by the
+    // null-guard pass, so `if (!doc) throw; return { ...doc }` is clean. An
+    // *unguarded* `{ ...maybeNullDoc }` keeps `nullable`, so the matcher flags
+    // it — on the null path the spread collapses to `{}` and Convex throws.
     return originToIntent(baseOrigin, baseDrop, literalFieldsMap);
   }
 
@@ -916,6 +1243,44 @@ function initShapeOf(node: Node, _scope: Scope): Shape {
   if (lit.kind === "literal") return lit;
   if (hasOptionalChain(node)) return { kind: "optional", inner: { kind: "any" } };
   return { kind: "any" };
+}
+
+/**
+ * Shape of an added/enrichment field's initializer. When the value is a *whole
+ * document* read (`row` / `.collect()` / a runQuery result), we synthesize the
+ * concrete schema-derived Shape so the matcher can diff the nested validator
+ * against it (B2 join/enrichment drift). Projections (`.map(...)`) and opaque
+ * expressions fall back to `initShapeOf` → `any`, so they never invent drift.
+ */
+function addShapeOf(node: Node, scope: Scope): Shape {
+  const origin = inferOrigin(node as Expression, scope);
+  const fromOrigin = shapeFromOrigin(origin, scope);
+  return fromOrigin ?? initShapeOf(node, scope);
+}
+
+function shapeFromOrigin(origin: VarOrigin, scope: Scope): Shape | null {
+  switch (origin.kind) {
+    case "rowOf": {
+      const t = scope.schema?.tables.get(origin.table);
+      if (!t) return null;
+      const obj = rowShape(t);
+      return origin.nullable ? { kind: "union", members: [obj, { kind: "null" }] } : obj;
+    }
+    case "rowsOf": {
+      const t = scope.schema?.tables.get(origin.table);
+      return t ? { kind: "array", element: rowShape(t) } : null;
+    }
+    case "idValueOf":
+      return { kind: "id", table: origin.table };
+    case "shapeOf":
+      return origin.shape;
+    case "primitive":
+      return origin.value !== undefined
+        ? { kind: "literal", value: origin.value }
+        : { kind: origin.primitive };
+    default:
+      return null;
+  }
 }
 
 function hasOptionalChain(node: Node): boolean {

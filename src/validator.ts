@@ -31,7 +31,11 @@ export function parseValidator(node: Node, depth = 0): Shape {
     return parseValidator(node.getExpression(), depth + 1);
   }
 
-  if (Node.isAsExpression(node) || Node.isTypeAssertion(node)) {
+  if (
+    Node.isAsExpression(node) ||
+    Node.isTypeAssertion(node) ||
+    Node.isSatisfiesExpression(node)
+  ) {
     return parseValidator(node.getExpression(), depth + 1);
   }
 
@@ -148,11 +152,11 @@ function parseObjectLiteral(obj: ObjectLiteralExpression, depth: number): Shape 
       const init = prop.getInitializer();
       if (!init) continue;
       const shape = parseValidator(init, depth + 1);
-      fields.set(name, unwrapOptional(shape));
+      fields.set(name, { ...unwrapOptional(shape), loc: locOf(prop) });
     } else if (Node.isShorthandPropertyAssignment(prop)) {
       // shorthand value: { foo } — treat as ref
       const name = prop.getName();
-      fields.set(name, { shape: { kind: "ref", symbol: name }, optional: false });
+      fields.set(name, { shape: { kind: "ref", symbol: name }, optional: false, loc: locOf(prop) });
     } else if (Node.isSpreadAssignment(prop)) {
       // spread of another validator/object — resolve at resolveNested time.
       // Two patterns to handle:
@@ -172,6 +176,14 @@ function parseObjectLiteral(obj: ObjectLiteralExpression, depth: number): Shape 
   }
 
   return { kind: "object", fields };
+}
+
+function locOf(prop: Node): FieldShape["loc"] {
+  return {
+    line: prop.getStartLineNumber(),
+    column: prop.getStart() - prop.getStartLinePos(),
+    text: prop.getText(),
+  };
 }
 
 function propertyName(prop: PropertyAssignment): string | null {
@@ -209,6 +221,10 @@ export function resolveRef(
   if (!def) return shape;
   const parsed = parseValidator(def.node);
   shape.resolved = resolveNested(parsed, def.sourceFile, project, seen);
+  // `seen` is an *active-path* stack, not a global visited-set: pop after
+  // resolving so a validator referenced by two sibling fields (a diamond)
+  // resolves in both, while true cycles still trip the guard above (C9).
+  seen.delete(shape.symbol);
   return shape.resolved;
 }
 
@@ -241,7 +257,7 @@ function resolveNested(
           continue;
         }
         const r = resolveRef(v.shape, sourceFile, project, seen);
-        next.set(k, { shape: r, optional: v.optional });
+        next.set(k, { shape: r, optional: v.optional, loc: v.loc });
       }
       return { ...shape, fields: next };
     }
@@ -265,7 +281,12 @@ function resolveNested(
   }
 }
 
-function findDefinition(
+/**
+ * Resolve an identifier to its definition node (initializer expression),
+ * following local declarations, imports, and re-export barrels. Exported for
+ * the schema parser, which needs to inline `...sharedTables` spreads.
+ */
+export function findDefinition(
   symbol: string,
   sourceFile: SourceFile,
   project: Project,
@@ -352,6 +373,78 @@ function normalize(p: string): string {
     else out.push(part);
   }
   return (p.startsWith("/") ? "/" : "") + out.join("/");
+}
+
+/**
+ * Render a Shape back into Convex validator source (`v.string()`, `v.id("t")`,
+ * `v.object({...})`, …) for copy-pasteable fix suggestions.
+ *
+ * Returns `null` when the shape (or any sub-shape) is an unresolved `ref` or
+ * `unknown` — we must never emit `v.ref()` / `v.unknown()` garbage. `opts.optional`
+ * wraps the result in `v.optional(...)`.
+ */
+export function shapeToValidatorSource(
+  shape: Shape,
+  opts: { optional?: boolean } = {},
+): string | null {
+  const inner = renderShape(shape);
+  if (inner === null) return null;
+  return opts.optional ? `v.optional(${inner})` : inner;
+}
+
+function renderShape(shape: Shape): string | null {
+  switch (shape.kind) {
+    case "any":
+      return "v.any()";
+    case "null":
+      return "v.null()";
+    case "string":
+      return "v.string()";
+    case "number":
+      return "v.number()";
+    case "int64":
+      return "v.int64()";
+    case "boolean":
+      return "v.boolean()";
+    case "bytes":
+      return "v.bytes()";
+    case "literal":
+      return `v.literal(${JSON.stringify(shape.value)})`;
+    case "id":
+      return `v.id(${JSON.stringify(shape.table)})`;
+    case "array": {
+      const el = renderShape(shape.element);
+      return el === null ? null : `v.array(${el})`;
+    }
+    case "record": {
+      const k = renderShape(shape.key);
+      const v = renderShape(shape.value);
+      return k === null || v === null ? null : `v.record(${k}, ${v})`;
+    }
+    case "optional": {
+      const i = renderShape(shape.inner);
+      return i === null ? null : `v.optional(${i})`;
+    }
+    case "union": {
+      const parts = shape.members.map(renderShape);
+      if (parts.some((p) => p === null)) return null;
+      return `v.union(${parts.join(", ")})`;
+    }
+    case "object": {
+      const parts: string[] = [];
+      for (const [k, fs] of shape.fields) {
+        if (k.startsWith("__spread:")) return null; // unresolved spread
+        const rendered = renderShape(fs.shape);
+        if (rendered === null) return null;
+        const value = fs.optional ? `v.optional(${rendered})` : rendered;
+        parts.push(`${k}: ${value}`);
+      }
+      return `v.object({ ${parts.join(", ")} })`;
+    }
+    // ref / unknown — can't render safely.
+    default:
+      return null;
+  }
 }
 
 /**

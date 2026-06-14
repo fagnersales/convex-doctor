@@ -2,6 +2,15 @@
 
 Roadmap for `check-convex-validators`. Each rule maps to a class of `ReturnsValidationError` we want to catch. ✅ = shipped, 🚧 = partial, ❌ = not yet.
 
+## Shipped — feedback overhaul + realistic patterns
+
+- **React-doctor-style diagnostics.** `src/rules.ts` rule registry (title/category/why/fixHint/docUrl) + `makeIssue` factory; `src/report.ts` rewritten to group by category with a runtime-risk headline, per-issue _why it matters_, a copy-pasteable `fix` (synthesized from the schema shape via `shapeToValidatorSource`, ref-safe), a source excerpt with a caret on the offending field, and a docs link. `--json` is now a versioned contract (`schemaVersion`, `summary`, rich per-issue fields).
+- **False-positive killers.** Null-narrowing guard pass (`if (!x) throw/return` narrows `rowOf`), `??`/`||` nullability taken from the RHS, `{ ...maybeNullRow }` treated as non-null, directional `OPTIONALITY_MISMATCH` and `STALE_FIELD` severity, opaque validator-builder branches (`doc()`) suppress hard mismatches.
+- **Realistic patterns.** FK joins (`ctx.db.get(row.fkId)`), enrichment adds carrying real related-doc shapes, `ctx.storage.getUrl()` → `string | null`, direct `return result.page`, `rows.length` counts, value-bounded literals, `v.optional(v.object(...))` unwrapping, paginated-envelope keys, spread schema tables, `satisfies`, diamond shared-validator refs.
+- **Robustness.** Per-function exception isolation (`ANALYZER_ERROR`) so one bad handler never crashes the run.
+- **Hardened against false positives** via an adversarial review round: combined `||` null guards, narrowing propagated to alias/destructure bindings, `ctx.storage.getUrl` guards, `.filter(Boolean)` null-strips, multi-branch `.map(x => cond ? a : b)` coverage, computed string/number enrichment fields, and `v.literal(...)` fix suggestions that never silently widen a schema.
+- Tests: 38 → 90, with guard fixtures locking each risky change against new false positives.
+
 ## Rules
 
 | ID | Rule | Status | Notes |

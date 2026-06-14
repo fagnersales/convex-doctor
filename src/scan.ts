@@ -5,6 +5,8 @@ import { parseValidator, resolveRef } from "./validator.ts";
 import { analyzeHandler } from "./handler.ts";
 import { matchFunction } from "./match.ts";
 import { buildGraph } from "./graph.ts";
+import { summarize } from "./report.ts";
+import { makeIssue } from "./rules.ts";
 import type {
   CallGraph,
   FunctionInfo,
@@ -47,21 +49,22 @@ export function run(opts: RunOptions): RunResult {
   const schemaPath = opts.schemaPath ?? `${convexDir}/schema.ts`;
   const schemaFile = project.getSourceFile(schemaPath);
   if (!schemaFile) {
+    const issues = [
+      makeIssue("ANALYZER_ERROR", {
+        severity: "error",
+        filePath: schemaPath,
+        line: 0,
+        function: "<schema>",
+        message: `Schema file not found at ${schemaPath}. Pass --schema <path> or --convex-dir <path> if your schema lives elsewhere.`,
+      }),
+    ];
     return {
-      issues: [
-        {
-          severity: "error",
-          code: "UNANALYZED",
-          filePath: schemaPath,
-          line: 0,
-          function: "<schema>",
-          message: `Schema file not found at ${schemaPath}`,
-        },
-      ],
+      issues,
       scannedFunctions: 0,
       schema: { tables: new Map() },
       timings: zeroTimings(t0, tFileLoad, project.getSourceFiles().length),
       functions: [],
+      summary: summarize(issues, 0),
     };
   }
 
@@ -140,23 +143,39 @@ export function run(opts: RunOptions): RunResult {
     if (!Node.isArrowFunction(p.handlerNode) && !Node.isFunctionExpression(p.handlerNode)) {
       continue;
     }
-    const intents = analyzeHandler(p.handlerNode, {
-      argsShape: p.argsShape,
-      schema,
-      resolveRunCall,
-    });
-    const fn: FunctionInfo = {
-      filePath: p.sf.getFilePath(),
-      line: p.decl.getStartLineNumber(),
-      exportName: p.decl.getName(),
-      kind: p.fnKind,
-      returnsValidator: p.returnsValidator,
-      returnsValidatorLine: p.returnsLine,
-      intents,
-    };
-    collected.push(fn);
-    scanned += 1;
-    allIssues.push(...matchFunction(fn, schema));
+    // Isolate analysis per function: a single pathological handler must never
+    // crash the whole run or silently drop out of the report. (C10)
+    try {
+      const intents = analyzeHandler(p.handlerNode, {
+        argsShape: p.argsShape,
+        schema,
+        resolveRunCall,
+      });
+      const fn: FunctionInfo = {
+        filePath: p.sf.getFilePath(),
+        line: p.decl.getStartLineNumber(),
+        exportName: p.decl.getName(),
+        kind: p.fnKind,
+        returnsValidator: p.returnsValidator,
+        returnsValidatorLine: p.returnsLine,
+        intents,
+      };
+      collected.push(fn);
+      scanned += 1;
+      allIssues.push(...matchFunction(fn, schema));
+    } catch (err) {
+      scanned += 1;
+      allIssues.push(
+        makeIssue("ANALYZER_ERROR", {
+          severity: "error",
+          filePath: p.sf.getFilePath(),
+          line: p.decl.getStartLineNumber(),
+          function: p.decl.getName(),
+          message: `Analyzer threw while processing this function — it was skipped`,
+          detail: err instanceof Error ? err.message : String(err),
+        }),
+      );
+    }
   }
   const tAnalyze = performance.now();
 
@@ -180,13 +199,15 @@ export function run(opts: RunOptions): RunResult {
     filesLoaded: project.getSourceFiles().length,
   };
 
+  const issues = filterIssues(allIssues, opts);
   return {
-    issues: filterIssues(allIssues, opts),
+    issues,
     scannedFunctions: scanned,
     schema,
     timings,
     graph,
     functions: collected,
+    summary: summarize(issues, scanned),
   };
 }
 

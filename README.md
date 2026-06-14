@@ -26,14 +26,21 @@ bunx check-convex-validators --convex-dir backend/convex
 | Code | Severity | Description |
 | --- | --- | --- |
 | `MISSING_FIELD` | error | Schema has a field; the row-return validator omits it (the original drift bug). |
-| `STALE_FIELD` | warn | Validator lists a field schema doesn't have (or handler doesn't add). |
-| `OPTIONALITY_MISMATCH` | error | Schema/validator disagree on whether a field is optional. |
-| `NULL_BRANCH_MISSING` | error | Handler can return `null` (e.g. `.first()` / `.unique()` / `ctx.db.get`) but validator lacks `v.null()`. |
+| `STALE_FIELD` | error / info | Validator lists a field schema doesn't have. **error** when the field is required (provably throws); **info** when optional (dead weight). |
+| `OPTIONALITY_MISMATCH` | error | Schema field is optional but the validator requires it (directional — schema-required + validator-optional never throws, so it is _not_ flagged). |
+| `NULL_BRANCH_MISSING` | error | Handler can return `null` (e.g. `.first()` / `.unique()` / `ctx.db.get`) but validator lacks `v.null()`. Suppressed when an early-exit null guard (`if (!x) throw/return`) narrows the value. |
 | `CARDINALITY_MISMATCH` | error | `.collect()` returns array but validator is single object (and vice versa). |
 | `EXTRA_LITERAL_FIELD` | error | Handler literal returns a field the validator doesn't declare. |
 | `MISSING_LITERAL_FIELD` | error | Validator requires a field the handler literal never sets. |
-| `TYPE_MISMATCH` | error | Top-level type categories disagree (e.g. handler returns `boolean`, validator only allows objects). |
+| `TYPE_MISMATCH` | error | Type categories disagree (primitive vs object, wrong `id<T>` table, wrong array element, value-bounded literal, joined/enriched field shape, paginated envelope type, …). |
 | `UNANALYZED` | info | Handler return is too dynamic to trace (helper call, multi-spread, etc.). Off by default — use `--include-unanalyzed`. |
+| `ANALYZER_ERROR` | error | The analyzer itself threw on one function — that function is skipped, the rest of the run is unaffected. |
+
+Every diagnostic is rendered with a plain-language **why it matters**, a concrete **fix** (often a copy-pasteable `v.*` snippet), a source excerpt with a caret on the offending field, and a Convex docs link. Output is grouped by category with a headline summarizing how many functions will throw `ReturnsValidationError` at runtime. Add `--json` for a versioned, CI-friendly contract (`schemaVersion`, `summary`, and the rich per-issue fields).
+
+### Realistic patterns it understands
+
+Foreign-key joins (`ctx.db.get(row.fkId)`), enrichment spreads (`{ ...row, related }` with the related doc/array diffed against the nested validator), `ctx.storage.getUrl()` as `string | null`, direct `return result.page`, count queries (`rows.length`), value-bounded literals (`return "active"` vs `v.literal(...)`), `v.optional(v.object(...))` returns, the paginated envelope (`isDone` / `continueCursor`), spread schema tables (`...sharedTables`), `satisfies Validator<…>`, and shared validators referenced by multiple fields.
 
 ## How it works
 

@@ -1,5 +1,5 @@
 import { Node, SyntaxKind, type SourceFile, type Project } from "ts-morph";
-import { parseValidator, resolveRef } from "./validator.ts";
+import { parseValidator, resolveRef, findDefinition } from "./validator.ts";
 import type { SchemaModel, TableSchema, FieldShape, Shape } from "./types.ts";
 
 /**
@@ -38,11 +38,42 @@ export function parseSchema(sourceFile: SourceFile, project: Project): SchemaMod
         filePath: sourceFile.getFilePath(),
         line: prop.getStartLineNumber(),
       });
+    } else if (Node.isSpreadAssignment(prop)) {
+      // `...sharedTables` — inline a spread table group when it resolves to a
+      // local object literal of `name: defineTable(...)` entries (B6). Common
+      // for shared/auth table bundles. Unresolvable (node_modules) spreads are
+      // skipped, first-writer-wins so explicit tables override.
+      mergeSpreadTables(prop.getExpression(), sourceFile, project, tables);
     }
-    // spread (`...calabasasTables`) — silently skip
   }
 
   return { tables };
+}
+
+function mergeSpreadTables(
+  expr: Node,
+  sourceFile: SourceFile,
+  project: Project,
+  tables: Map<string, TableSchema>,
+): void {
+  if (!Node.isIdentifier(expr)) return;
+  const def = findDefinition(expr.getText(), sourceFile, project);
+  if (!def || !Node.isObjectLiteralExpression(def.node)) return;
+  for (const prop of def.node.getProperties()) {
+    if (!Node.isPropertyAssignment(prop)) continue;
+    const tableName = propertyName(prop);
+    if (!tableName || tables.has(tableName)) continue; // first-writer-wins
+    const init = prop.getInitializer();
+    if (!init) continue;
+    const fields = extractTableFields(init, def.sourceFile, project);
+    if (!fields) continue;
+    tables.set(tableName, {
+      table: tableName,
+      fields,
+      filePath: def.sourceFile.getFilePath(),
+      line: prop.getStartLineNumber(),
+    });
+  }
 }
 
 function findDefineSchemaCall(sourceFile: SourceFile) {

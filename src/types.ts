@@ -24,6 +24,9 @@ export type Shape =
 export interface FieldShape {
   shape: Shape;
   optional: boolean;
+  /** Source location of the field in the validator, for precise diagnostics.
+   *  Captured when the shape comes from a parsed `v.object({...})` property. */
+  loc?: { line: number; column: number; text: string };
 }
 
 export interface TableSchema {
@@ -57,9 +60,21 @@ export type ReturnIntent =
       pageOverride?: ReturnIntent;
     }
   | { kind: "literal"; fields: Map<string, Shape> }
-  | { kind: "literalArray"; element: ReturnIntent }
+  | {
+      kind: "literalArray";
+      element: ReturnIntent;
+      /** Set when the array's callback has multiple distinct element shapes
+       *  (e.g. `.map(x => cond ? a : b)`). The matcher diffs every entry. */
+      elements?: ReturnIntent[];
+    }
   | { kind: "null" }
-  | { kind: "primitive"; primitive: "string" | "number" | "boolean" }
+  | {
+      kind: "primitive";
+      primitive: "string" | "number" | "boolean";
+      /** Set when the return is a literal value (e.g. `return "active"`), so
+       *  the matcher can check it against a `v.literal(...)` branch by value. */
+      value?: string | number | boolean;
+    }
   /** Result of `ctx.db.insert("T", {...})` — Convex returns `Id<"T">`. */
   | { kind: "idValue"; table: string }
   /** Result of `ctx.runQuery/runMutation/runAction(internal.x.y, ...)` —
@@ -79,24 +94,58 @@ export interface FunctionInfo {
 
 export type IssueSeverity = "error" | "warn" | "info";
 
+export type IssueCode =
+  | "MISSING_FIELD"
+  | "STALE_FIELD"
+  | "OPTIONALITY_MISMATCH"
+  | "TYPE_MISMATCH"
+  | "NULL_BRANCH_MISSING"
+  | "CARDINALITY_MISMATCH"
+  | "EXTRA_LITERAL_FIELD"
+  | "MISSING_LITERAL_FIELD"
+  | "UNANALYZED"
+  /** The analyzer itself threw while processing one function — emitted so a
+   *  single bad function never silently drops out of the report. */
+  | "ANALYZER_ERROR";
+
+/** A concrete, copy-pasteable fix suggestion. Only the relevant keys are set. */
+export interface FixCode {
+  /** The validator source as it reads today (the offending fragment). */
+  before?: string;
+  /** What it should read instead. */
+  after?: string;
+  /** A line to add (e.g. a missing field). */
+  add?: string;
+  /** A line/fragment to remove (e.g. a stale field). */
+  remove?: string;
+}
+
 export interface Issue {
   severity: IssueSeverity;
-  code:
-    | "MISSING_FIELD"
-    | "STALE_FIELD"
-    | "OPTIONALITY_MISMATCH"
-    | "TYPE_MISMATCH"
-    | "NULL_BRANCH_MISSING"
-    | "CARDINALITY_MISMATCH"
-    | "EXTRA_LITERAL_FIELD"
-    | "MISSING_LITERAL_FIELD"
-    | "UNANALYZED";
+  code: IssueCode;
   filePath: string;
   line: number;
   function: string;
   table?: string;
   message: string;
   detail?: string;
+  // ── Rich diagnostic fields (filled by makeIssue from the rule registry) ──
+  /** Diagnostic category — for grouping in the report. */
+  category?: import("./rules.ts").DiagCategory;
+  /** Plain-language "why this matters" (runtime consequence). */
+  why?: string;
+  /** Short, human fix instruction. */
+  fix?: string;
+  /** Structured, copy-pasteable fix (before/after/add/remove). */
+  fixCode?: FixCode;
+  /** Convex docs deep-link. */
+  docUrl?: string;
+  /** Precise pointer for the source excerpt (defaults to `line`). */
+  pointerLine?: number;
+  /** 0-based column of the offending token, for the caret. */
+  pointerColumn?: number;
+  /** Length of the caret underline. */
+  pointerLength?: number;
 }
 
 export interface RunOptions {
@@ -173,6 +222,23 @@ export interface Timings {
   filesLoaded: number;
 }
 
+export interface RunSummary {
+  errors: number;
+  warns: number;
+  infos: number;
+  scannedFunctions: number;
+  /** Distinct functions with ≥1 error — the ones that will actually throw. */
+  affectedFns: number;
+  /** Most frequent issue code (errors weighted first), or null when clean. */
+  topCode: IssueCode | null;
+  /** Issue count per category. */
+  byCategory: Record<import("./rules.ts").DiagCategory, number>;
+  /** Issue count per code. */
+  byCode: Partial<Record<IssueCode, number>>;
+  /** One-line headline summarizing runtime risk. */
+  headline: string;
+}
+
 export interface RunResult {
   issues: Issue[];
   scannedFunctions: number;
@@ -182,4 +248,6 @@ export interface RunResult {
   functions: FunctionInfo[];
   /** Present only when `RunOptions.buildGraph` is true. */
   graph?: CallGraph;
+  /** Tally + headline, computed once after matching. */
+  summary?: RunSummary;
 }

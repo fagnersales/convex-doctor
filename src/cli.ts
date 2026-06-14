@@ -126,7 +126,9 @@ if (opts.deadOnly) {
   if (opts.format === "json") {
     process.stdout.write(reportJson(result) + "\n");
   } else {
-    process.stdout.write(reportText(result));
+    process.stdout.write(
+      reportText(result, { convexDir: opts.convexDir, color: process.stdout.isTTY ?? false }),
+    );
   }
 
   if (opts.printDead && result.graph) {
