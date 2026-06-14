@@ -61,17 +61,38 @@ export function parseValidator(node: Node, depth = 0): Shape {
   return { kind: "unknown", reason: `unsupported node: ${node.getKindName()}` };
 }
 
+/** The table-name string literal from a `doc(schema, "table")` / `vv.doc("table")`
+ *  call's arguments, or null if none is a string literal. */
+function docTableArg(args: Node[]): string | null {
+  for (const a of args) {
+    if (Node.isStringLiteral(a)) return a.getLiteralValue();
+  }
+  return null;
+}
+
 function parseCallValidator(call: CallExpression, depth: number): Shape {
   const expr = call.getExpression();
   const args = call.getArguments();
 
   // expr should be a property access like `v.string`
   if (!Node.isPropertyAccessExpression(expr)) {
+    // convex-helpers `doc(schema, "table")` — a full-document validator. Its
+    // table arg lets us treat it as a single-object shape (resolved to the
+    // table's fields later when the schema is known).
+    if (Node.isIdentifier(expr) && expr.getText() === "doc") {
+      const t = docTableArg(args);
+      if (t) return { kind: "docRef", table: t };
+    }
     // could be a helper call returning a validator (e.g. `customId("foo")`)
     return { kind: "unknown", reason: `non-v call: ${expr.getText()}` };
   }
 
   const method = expr.getName();
+  // typedV `vv.doc("table")` — property-access form of the doc() helper.
+  if (method === "doc") {
+    const t = docTableArg(args);
+    if (t) return { kind: "docRef", table: t };
+  }
   switch (method) {
     case "string":
       return { kind: "string" };

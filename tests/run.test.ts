@@ -620,6 +620,23 @@ describe("false negatives fixed by the sensitivity (fault-injection) audit", () 
     expect(ex).toBeDefined();
     expect(ex!.message).toContain("bogus");
   });
+  // FIX E — a `.map()` projection used as an object-field value is diffed at the
+  // element level instead of flattening to `any`.
+  test("`.map()` projection field element drift is caught", () => {
+    const tm = fnIssues("false-negatives", "mapProjectionField").find((i) => i.code === "TYPE_MISMATCH");
+    expect(tm).toBeDefined();
+    expect(tm!.message).toContain("tag");
+  });
+  // FIX D — convex-helpers `doc(schema,"table")` is a single object; an array
+  // return against it is a cardinality mismatch (was suppressed as opaque).
+  test("doc() validator vs array return is a cardinality mismatch", () => {
+    const c = fnIssues("false-negatives", "docCardinality").find((i) => i.code === "CARDINALITY_MISMATCH");
+    expect(c).toBeDefined();
+  });
+  // FIX D guardrail — a single-doc return against doc() stays clean.
+  test("doc() validator with a matching single-doc return stays clean", () => {
+    expect(fnErrors("false-negatives", "docClean")).toEqual([]);
+  });
 });
 
 describe("computed string-concat enrichment field", () => {

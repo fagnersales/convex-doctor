@@ -1357,6 +1357,50 @@ function addShapeOf(node: Node, scope: Scope): Shape {
   return fromOrigin ?? initShapeOf(node, scope);
 }
 
+/**
+ * Convert a classified return intent into a concrete Shape, so a nested value
+ * (e.g. a `.map(...)` projection used as an object-literal field) can be diffed
+ * structurally instead of collapsing to `any`. Returns null when we can't build
+ * a concrete shape without inventing drift (opaque / unanalyzed intents).
+ * (Found by the sensitivity audit: expo-push `callExpoPushApiWithBatch`, where a
+ * `.map()` element field was flattened to `any` and an id-table swap slipped by.)
+ */
+function intentToShape(intent: ReturnIntent, scope: Scope): Shape | null {
+  switch (intent.kind) {
+    case "null":
+      return { kind: "null" };
+    case "primitive":
+      return intent.value !== undefined
+        ? { kind: "literal", value: intent.value }
+        : { kind: intent.primitive };
+    case "idValue":
+      return { kind: "id", table: intent.table };
+    case "passthrough":
+      return intent.shape;
+    case "literal": {
+      const fields = new Map<string, FieldShape>();
+      for (const [k, s] of intent.fields) fields.set(k, { shape: s, optional: false });
+      return { kind: "object", fields };
+    }
+    case "row": {
+      const t = scope.schema?.tables.get(intent.table);
+      if (!t) return null;
+      const base = rowShape(t) as Shape & { kind: "object" };
+      const fields = new Map(base.fields);
+      for (const k of intent.drop) fields.delete(k);
+      for (const [k, s] of intent.add) fields.set(k, { shape: s, optional: false });
+      const obj: Shape = { kind: "object", fields };
+      return intent.nullable ? { kind: "union", members: [obj, { kind: "null" }] } : obj;
+    }
+    case "literalArray": {
+      const el = intentToShape(intent.element, scope);
+      return el ? { kind: "array", element: el } : null;
+    }
+    default:
+      return null; // rows / paginated / unanalyzed → don't invent drift
+  }
+}
+
 function shapeFromOrigin(origin: VarOrigin, scope: Scope): Shape | null {
   switch (origin.kind) {
     case "rowOf": {
@@ -1368,6 +1412,12 @@ function shapeFromOrigin(origin: VarOrigin, scope: Scope): Shape | null {
     case "rowsOf": {
       const t = scope.schema?.tables.get(origin.table);
       return t ? { kind: "array", element: rowShape(t) } : null;
+    }
+    case "literalArrayOf": {
+      // `arr.map(x => ({...}))` used as a value — diff the projected element
+      // instead of flattening the array to `any`.
+      const el = intentToShape(origin.element, scope);
+      return el ? { kind: "array", element: el } : null;
     }
     case "idValueOf":
       return { kind: "id", table: origin.table };

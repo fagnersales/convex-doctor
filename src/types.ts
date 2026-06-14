@@ -19,6 +19,11 @@ export type Shape =
   | { kind: "union"; members: Shape[] }
   | { kind: "optional"; inner: Shape }
   | { kind: "ref"; symbol: string; resolved?: Shape } // imported validator
+  /** convex-helpers `doc(schema, "table")` / `vv.doc("table")` — provably a
+   *  single object (never an array). Resolved to the table's object shape when
+   *  the schema is known; otherwise kept opaque at the field level but still
+   *  diffable for cardinality. */
+  | { kind: "docRef"; table: string }
   | { kind: "unknown"; reason: string };
 
 export interface FieldShape {

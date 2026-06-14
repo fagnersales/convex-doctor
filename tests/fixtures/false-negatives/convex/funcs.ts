@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import { doc } from "convex-helpers/validators";
 import { query } from "./_generated/server";
 import schema from "./schema";
 import { getPointHandler } from "./handlers";
@@ -62,4 +63,37 @@ export const wrappedHandler = query({
   args: {},
   returns: v.object({ ok: v.boolean() }),
   handler: wrap(async () => ({ ok: true })),
+});
+
+// FIX E — a `.map()` projection used as an object-literal field. The element's
+// `tag` is a number literal but the validator's element declares v.string(). The
+// array element must be diffed, not flattened to `any` (expo-push id-table swap).
+export const mapProjectionField = query({
+  args: {},
+  returns: v.object({ items: v.array(v.object({ tag: v.string() })) }),
+  handler: async (ctx) => {
+    const ps = await ctx.db.query("points").collect();
+    return { items: ps.map((p) => ({ tag: 1 })) };
+  },
+});
+
+// FIX D — convex-helpers `doc(schema, "table")` is recognized as a single-object
+// validator. The handler returns an ARRAY, so it's a CARDINALITY_MISMATCH — was
+// suppressed because doc() parsed as an opaque unknown branch (better-auth).
+export const docCardinality = query({
+  args: {},
+  returns: v.union(v.null(), doc(schema, "points")),
+  handler: async (ctx) => {
+    return await ctx.db.query("points").collect();
+  },
+});
+
+// FIX D guardrail — a single-doc return against doc(schema,"points") stays clean
+// (the doc() helper must not introduce a false positive).
+export const docClean = query({
+  args: { id: v.id("points") },
+  returns: v.union(v.null(), doc(schema, "points")),
+  handler: async (ctx, args) => {
+    return await ctx.db.get(args.id);
+  },
 });

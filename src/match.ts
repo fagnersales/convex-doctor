@@ -16,13 +16,24 @@ export function matchFunction(fn: FunctionInfo, schema: SchemaModel): Issue[] {
     return issues;
   }
 
-  const branches = unfoldUnion(fn.returnsValidator);
+  const branches = unfoldUnion(fn.returnsValidator).map((b) => resolveDocRefBranch(b, schema));
 
   for (const intent of fn.intents) {
     issues.push(...matchIntentAgainstUnion(fn, intent, branches, schema));
   }
 
   return issues;
+}
+
+/** Expand a `doc(schema,"t")` / `vv.doc("t")` branch to the table's object shape
+ *  when the schema is known (so field/type/extra drift is diffed). When the
+ *  table can't be resolved, keep it as `docRef` — opaque at the field level but
+ *  still provably a single object for cardinality. */
+function resolveDocRefBranch(b: Shape, schema: SchemaModel): Shape {
+  if (b.kind !== "docRef") return b;
+  const t = schema.tables.get(b.table);
+  if (t && t.fields.size > 0) return rowShape(t);
+  return b;
 }
 
 /**
@@ -47,6 +58,13 @@ function hasAny(branches: Shape[]): boolean {
  *  prove drift through an opaque branch, so we suppress hard mismatches that
  *  would otherwise be false positives (e.g. `doc(schema,"t")` helpers). (C6) */
 function hasOpaqueBranch(branches: Shape[]): boolean {
+  return branches.some((b) => b.kind === "ref" || b.kind === "unknown" || b.kind === "docRef");
+}
+
+/** Opaque branches that could plausibly be an ARRAY (a truly unresolved ref or
+ *  unknown). A `docRef` is provably a single object — never an array — so it is
+ *  NOT array-plausible and must not suppress a cardinality mismatch. */
+function hasArrayPlausibleOpaque(branches: Shape[]): boolean {
   return branches.some((b) => b.kind === "ref" || b.kind === "unknown");
 }
 
@@ -159,7 +177,7 @@ function matchIntentAgainstUnion(
     case "rows": {
       const arr = branches.find((b) => b.kind === "array");
       if (!arr || arr.kind !== "array") {
-        if (hasOpaqueBranch(branches)) return [];
+        if (hasArrayPlausibleOpaque(branches)) return []; // a ref/unknown branch might BE the array
         return [
           makeIssue("CARDINALITY_MISMATCH", {
             severity: "error",
@@ -198,7 +216,7 @@ function matchIntentAgainstUnion(
       // expected: object { page: array<...>, isDone: boolean, continueCursor: string }
       const objBranch = branches.find((b) => b.kind === "object");
       if (!objBranch || objBranch.kind !== "object") {
-        if (hasOpaqueBranch(branches)) return [];
+        if (hasArrayPlausibleOpaque(branches)) return [];
         return [
           makeIssue("CARDINALITY_MISMATCH", {
             severity: "error",
