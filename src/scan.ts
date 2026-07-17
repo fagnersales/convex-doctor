@@ -257,15 +257,16 @@ export function run(opts: RunOptions): RunResult {
     filesLoaded: project.getSourceFiles().length,
   };
 
-  const issues = filterIssues(allIssues, opts);
+  const { visible, suppressed } = applySuppressions(filterIssues(allIssues, opts), project);
   return {
-    issues,
+    issues: visible,
     scannedFunctions: scanned,
     schema,
     timings,
     graph,
     functions: collected,
-    summary: summarize(issues, scanned),
+    summary: summarize(visible, scanned),
+    ...(suppressed.length > 0 ? { suppressed } : {}),
   };
 }
 
@@ -291,6 +292,62 @@ function pendingKey(convexDir: string, filePath: string, exportName: string): st
 function stripConvexPrefix(path: string, convexDir: string): string {
   const dir = convexDir.endsWith("/") ? convexDir : `${convexDir}/`;
   return path.startsWith(dir) ? path.slice(dir.length) : path;
+}
+
+/**
+ * `// convex-doctor: ignore <CODE>[, <CODE>…] — reason` on the flagged line
+ * (trailing) or the line directly above it silences that finding — the lint
+ * counterpart of the dead-code `keep` comment. Codes are explicit and
+ * case-insensitive; there is deliberately no bare blanket `ignore`, so a new
+ * issue of a different code on the same line still surfaces. Suppressed issues
+ * drop out of the report, groups, and the exit code, but are returned under
+ * `RunResult.suppressed` so reports can say how many were muted.
+ */
+const IGNORE_DIRECTIVE = /convex-doctor:\s*ignore\s+([A-Za-z0-9_,\s]+)/i;
+
+function ignoredCodesOn(lineText: string | undefined): Set<string> | null {
+  if (!lineText) return null;
+  const m = IGNORE_DIRECTIVE.exec(lineText);
+  if (!m) return null;
+  const codes = m[1]
+    .split(/[,\s]+/)
+    .map((c) => c.trim().toUpperCase())
+    .filter(Boolean);
+  return codes.length > 0 ? new Set(codes) : null;
+}
+
+function applySuppressions(
+  issues: Issue[],
+  project: Project,
+): { visible: Issue[]; suppressed: Issue[] } {
+  const visible: Issue[] = [];
+  const suppressed: Issue[] = [];
+  const lineCache = new Map<string, string[] | null>();
+
+  const linesFor = (filePath: string): string[] | null => {
+    let lines = lineCache.get(filePath);
+    if (lines === undefined) {
+      lines = project.getSourceFile(filePath)?.getFullText().split(/\r?\n/) ?? null;
+      lineCache.set(filePath, lines);
+    }
+    return lines;
+  };
+
+  for (const issue of issues) {
+    const lines = issue.line > 0 ? linesFor(issue.filePath) : null;
+    if (lines) {
+      // 1-based issue.line → lines[line - 1] is the flagged line itself,
+      // lines[line - 2] the line directly above it.
+      const onLine = ignoredCodesOn(lines[issue.line - 1]);
+      const above = issue.line > 1 ? ignoredCodesOn(lines[issue.line - 2]) : null;
+      if (onLine?.has(issue.code) || above?.has(issue.code)) {
+        suppressed.push(issue);
+        continue;
+      }
+    }
+    visible.push(issue);
+  }
+  return { visible, suppressed };
 }
 
 function filterIssues(issues: Issue[], opts: RunOptions): Issue[] {

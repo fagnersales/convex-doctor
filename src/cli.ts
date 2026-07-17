@@ -152,6 +152,14 @@ Options:
                            ignored/kept arrays (when combined with --json).
   -h, --help               Show this help
 
+Suppressing a finding:
+  When a flagged site is intentional (e.g. a documented sequential loop), put
+  an ignore comment on the flagged line or the line directly above it:
+    // convex-doctor: ignore AWAIT_IN_LOOP — sequential by design, see comment
+  The code is required (no blanket ignore); several codes may be listed,
+  comma-separated. Suppressed findings leave the report, groups, and the exit
+  code, and are tallied under \`suppressed\` in --json output.
+
 Exit codes:
   0  No errors (and no warnings if --strict)
   1  Errors found (or warnings under --strict)
@@ -202,6 +210,13 @@ RULES OF ENGAGEMENT
   • One group per commit — never mix codes in a single commit.
   • Always re-scan (step 4) before committing — it is the proof the fix landed.
   • Prefer fixCode when present; otherwise follow "fix" + the docUrl recipe.
+  • Not every site should be "fixed". If the flagged pattern is intentional —
+    a comment documents sequential-by-design, an upsert loop relies on
+    read-your-writes dedupe, dev-only seed code — do NOT force the recipe.
+    Silence it in place, with the reason, on the line above the flagged line:
+      // convex-doctor: ignore <CODE> — <why this is intentional>
+    Re-scanning then drops the site (it moves to "suppressed"), so the loop
+    still converges to 0. Suppress sparingly: the reason must survive review.
   • If a "manual" group needs a design decision you cannot make, skip it, finish
     the rest, and report what you skipped and why.
 `;

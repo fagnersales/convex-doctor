@@ -335,4 +335,8 @@ export interface RunResult {
   graph?: CallGraph;
   /** Tally + headline, computed once after matching. */
   summary?: RunSummary;
+  /** Issues silenced by a `convex-doctor: ignore <CODE>` comment on (or right
+   *  above) the flagged line. Excluded from `issues`, the summary, groups, and
+   *  the exit code — surfaced here so reports can say how many were muted. */
+  suppressed?: Issue[];
 }

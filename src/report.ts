@@ -112,9 +112,16 @@ export function reportText(result: RunResult, opts: ReportOptions = {}): string 
   const { issues, scannedFunctions, timings } = result;
   const summary = result.summary ?? summarize(issues, scannedFunctions);
 
+  const nSuppressed = result.suppressed?.length ?? 0;
+  const suppressedNote =
+    nSuppressed > 0
+      ? `${nSuppressed} finding(s) suppressed by \`convex-doctor: ignore\` comments`
+      : null;
+
   if (issues.length === 0) {
     return (
       `${paint("green", "✓")} ${paint("bold", summary.headline)}\n` +
+      (suppressedNote ? `${paint("gray", suppressedNote)}\n` : "") +
       `${paint("gray", timingLine(timings, scannedFunctions))}\n`
     );
   }
@@ -128,6 +135,7 @@ export function reportText(result: RunResult, opts: ReportOptions = {}): string 
   for (const w of wrap(summary.headline, 76)) lines.push(`  ${w}`);
   lines.push("");
   lines.push(`  ${tallyLine(summary, paint)}      ${paint("gray", `scanned ${scannedFunctions} function(s) in ${formatMs(timings.totalMs)}`)}`);
+  if (suppressedNote) lines.push(`  ${paint("gray", suppressedNote)}`);
 
   const fileCache = new Map<string, string[] | null>();
 
@@ -395,6 +403,12 @@ export function reportJson(result: RunResult): string {
         scannedFiles: result.graph.scannedFiles,
       }
     : undefined;
+  const suppressed = (result.suppressed ?? []).map((i) => ({
+    code: i.code,
+    filePath: i.filePath,
+    line: i.line,
+    function: i.function,
+  }));
   return JSON.stringify(
     {
       schemaVersion: 1,
@@ -402,6 +416,7 @@ export function reportJson(result: RunResult): string {
       summary,
       issues: result.issues,
       timings: result.timings,
+      ...(suppressed.length > 0 ? { suppressed } : {}),
       ...(graph ? { graph } : {}),
     },
     null,

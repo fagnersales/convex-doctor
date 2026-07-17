@@ -68,6 +68,20 @@ Run by default alongside the drift checks (`--no-lint` to disable). They encode 
 
 Each rule deep-links to the exact Convex doc section it enforces. Documented practices that are *not* statically decidable (auth checks on public functions, same-runtime `runAction`) are deliberately left out rather than guessed at — see `TODO.md`.
 
+### Suppressing a finding
+
+Not every flagged site should change — a delete loop may be sequential by design, an upsert loop may rely on read-your-writes dedupe. Silence a specific finding with an ignore comment on the flagged line (trailing) or the line directly above it, stating the reason:
+
+```ts
+for (const row of rows) {
+  if (onRow) await onRow(ctx, row);
+  // convex-doctor: ignore AWAIT_IN_LOOP — commits atomically; hooks must run in order
+  await ctx.db.delete(row._id);
+}
+```
+
+The code is required — there is deliberately no blanket `ignore`, so a different issue appearing on the same line still surfaces. Several codes can be listed comma-separated (`// convex-doctor: ignore UNBOUNDED_COLLECT, FILTER_IN_QUERY — tiny legacy table`). Suppressed findings leave the report, `groups`, and the exit code; they're tallied in the text report and listed under `suppressed` in `--json`, so a review can still see what was muted and why. This is the lint counterpart of the dead-code [`keep` comment](#dead-function-detection).
+
 ### Realistic patterns it understands
 
 Foreign-key joins (`ctx.db.get(row.fkId)`), enrichment spreads (`{ ...row, related }` with the related doc/array diffed against the nested validator), `ctx.storage.getUrl()` as `string | null`, direct `return result.page`, count queries (`rows.length`), value-bounded literals (`return "active"` vs `v.literal(...)`), `v.optional(v.object(...))` returns, the paginated envelope (`isDone` / `continueCursor`), spread schema tables (`...sharedTables`), `satisfies Validator<…>`, and shared validators referenced by multiple fields.

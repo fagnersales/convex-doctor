@@ -58,6 +58,19 @@ Repeat until `groups` reports `done: true` (or the user's arg-scoped groups are 
    apply the `rule.fix` recipe, keep edits faithful to the surrounding style.
    Fix every site in the batch.
 
+   **Not every site should be "fixed."** If reading the context shows the
+   flagged pattern is intentional — a comment documents sequential-by-design,
+   an upsert loop relies on read-your-writes dedupe, dev-only seed code —
+   don't force the recipe. Suppress it in place with the reason:
+
+   ```ts
+   // convex-doctor: ignore <CODE> — <why this is intentional>
+   ```
+
+   on the line above the flagged line. The re-scan then drops the site (it
+   moves to `suppressed` in the JSON), so the loop still converges. Suppress
+   sparingly — the reason must survive code review.
+
 4. **Verify / advance — re-scan the same group**
 
    ```bash
