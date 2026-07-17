@@ -55,6 +55,18 @@ describe("dead-function graph", () => {
     expect(edge?.from.startsWith("external:")).toBe(true);
   });
 
+  test("anyApi chain (untyped reference from an external script) counts as a caller", () => {
+    expect(g.dead).not.toContain("funcs:anyApiCalled");
+    const edge = g.edges.find((e) => e.to === "funcs:anyApiCalled");
+    expect(edge?.from.startsWith("external:")).toBe(true);
+  });
+
+  test("callers under dot-directories (.claude skill scripts) are scanned", () => {
+    expect(g.dead).not.toContain("funcs:dotDirCalled");
+    const edge = g.edges.find((e) => e.to === "funcs:dotDirCalled");
+    expect(edge?.filePath).toContain("/.claude/");
+  });
+
   test("non-function colon strings create no edges", () => {
     const stringEdges = g.edges.filter((e) => e.via === "string-ref");
     expect(stringEdges).toHaveLength(1);

@@ -133,12 +133,16 @@ export function buildGraph(input: BuildGraphInput): CallGraph {
   });
   project.addSourceFilesAtPaths([
     `${projectRoot}/**/*.{ts,tsx,js,jsx,mjs,cjs}`,
+    // `**` never matches a dotted path segment, but agent-era repos keep real
+    // callers under dot-directories — .claude/skills scripts, .github workflow
+    // scripts. Match dot-dirs explicitly (`{,**/}` = at the root or anywhere
+    // below); the vcs/build dot-dirs are excluded right after.
+    `${projectRoot}/{,**/}.*/**/*.{ts,tsx,js,jsx,mjs,cjs}`,
     `!${projectRoot}/**/node_modules/**`,
+    `!${projectRoot}/{,**/}.*/**/node_modules/**`,
+    `!${projectRoot}/{,**/}.{git,next,turbo,vercel,wrangler,cache}/**`,
     `!${projectRoot}/**/dist/**`,
     `!${projectRoot}/**/build/**`,
-    `!${projectRoot}/**/.next/**`,
-    `!${projectRoot}/**/.turbo/**`,
-    `!${projectRoot}/**/.vercel/**`,
     `!${projectRoot}/**/coverage/**`,
     // Skip Convex's top-level codegen — it has no api.x/internal.x chains
     // anyway, but excluding keeps the file count honest. Sub-package
@@ -195,10 +199,12 @@ export function buildGraph(input: BuildGraphInput): CallGraph {
         if (id) addEdge(node, id, "string-ref");
         return;
       }
-      // Identifier `api` or `internal` is the root of every chain we care about.
+      // Identifier `api`, `internal`, or `anyApi` (the untyped reference
+      // builder from "convex/server", used by external scripts that can't
+      // import _generated) is the root of every chain we care about.
       if (!Node.isIdentifier(node)) return;
       const text = node.getText();
-      if (text !== "api" && text !== "internal") return;
+      if (text !== "api" && text !== "internal" && text !== "anyApi") return;
       // Skip the import declaration itself (`import { api } from ...`).
       if (insideImportDecl(node)) return;
       const chain = readChain(node);

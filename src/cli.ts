@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { writeSync } from "node:fs";
 import { run } from "./scan.ts";
 import {
   reportText,
@@ -100,7 +101,7 @@ function parseArgs(argv: string[]): CliOptions {
 }
 
 function printHelp() {
-  process.stdout.write(`convex-doctor
+  writeOut(`convex-doctor
 
 Static analyzer for Convex: ReturnsValidationError drift + best-practice lints.
 
@@ -222,11 +223,33 @@ RULES OF ENGAGEMENT
 `;
 
 const argv = process.argv.slice(2);
+/**
+ * Write a report payload to stdout SYNCHRONOUSLY, then it is safe to
+ * `process.exit()`. `writeOut()` buffers, and exit discards
+ * whatever hasn't drained — a piped `--json` report bigger than the 64KB pipe
+ * buffer truncates mid-string, breaking exactly the agentic `--json | parse`
+ * contract on the big repos that need it (write callbacks don't help under
+ * Bun; they fire before the pipe drains). `writeSync` on fd 1 blocks until
+ * the reader has accepted every byte. EAGAIN can surface when the fd is
+ * non-blocking — retry until the pipe accepts.
+ */
+function writeOut(text: string): void {
+  const buf = Buffer.from(text);
+  let off = 0;
+  while (off < buf.length) {
+    try {
+      off += writeSync(1, buf, off, buf.length - off);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "EAGAIN") throw err;
+    }
+  }
+}
+
 // A leading non-flag token is a subcommand (`groups` / `agent-guide`).
 const subcommand = argv[0] && !argv[0].startsWith("-") ? argv[0] : null;
 
 if (subcommand === "agent-guide") {
-  process.stdout.write(AGENT_GUIDE);
+  writeOut(AGENT_GUIDE);
   process.exit(0);
 }
 
@@ -235,9 +258,9 @@ const opts = parseArgs(argv);
 if (subcommand === "groups") {
   const result = run(opts);
   if (opts.format === "json") {
-    process.stdout.write(reportGroupsJson(result.issues, result.scannedFunctions) + "\n");
+    writeOut(reportGroupsJson(result.issues, result.scannedFunctions) + "\n");
   } else {
-    process.stdout.write(
+    writeOut(
       reportGroupsText(result.issues, result.scannedFunctions, {
         convexDir: opts.convexDir,
         color: process.stdout.isTTY ?? false,
@@ -269,7 +292,7 @@ if (opts.only) {
 
   // The agentic path: a compact, capped work-list instead of the full report.
   if (opts.format === "json") {
-    process.stdout.write(
+    writeOut(
       reportOnlyJson(filtered, result.scannedFunctions, {
         limit: opts.limit,
         convexDir: opts.convexDir,
@@ -293,7 +316,7 @@ if (opts.deadOnly) {
     const kept = result.graph
       ? result.graph.nodes.filter((n) => n.kept).map((n) => n.id)
       : [];
-    process.stdout.write(
+    writeOut(
       JSON.stringify(
         {
           dead: result.graph?.dead ?? [],
@@ -306,13 +329,13 @@ if (opts.deadOnly) {
       ) + "\n",
     );
   } else if (result.graph) {
-    for (const id of result.graph.dead) process.stdout.write(id + "\n");
+    for (const id of result.graph.dead) writeOut(id + "\n");
   }
 } else {
   if (opts.format === "json") {
-    process.stdout.write(reportJson(result) + "\n");
+    writeOut(reportJson(result) + "\n");
   } else {
-    process.stdout.write(
+    writeOut(
       reportText(result, { convexDir: opts.convexDir, color: process.stdout.isTTY ?? false }),
     );
   }
@@ -321,15 +344,15 @@ if (opts.deadOnly) {
     if (opts.format !== "json") {
       const g = result.graph;
       const transitive = new Set(g.deadTransitive);
-      process.stdout.write(`\nDead functions (${g.dead.length}):\n`);
+      writeOut(`\nDead functions (${g.dead.length}):\n`);
       for (const id of g.dead) {
         const note = transitive.has(id) ? "   (referenced only by dead code)" : "";
-        process.stdout.write(`  ${id}${note}\n`);
+        writeOut(`  ${id}${note}\n`);
       }
       const kept = g.nodes.filter((n) => n.kept);
       if (kept.length > 0) {
-        process.stdout.write(`Kept alive by \`convex-doctor: keep\` comments (${kept.length}):\n`);
-        for (const n of kept) process.stdout.write(`  ${n.id}\n`);
+        writeOut(`Kept alive by \`convex-doctor: keep\` comments (${kept.length}):\n`);
+        for (const n of kept) writeOut(`  ${n.id}\n`);
       }
     }
   }

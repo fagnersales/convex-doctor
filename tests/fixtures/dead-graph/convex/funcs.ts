@@ -69,3 +69,17 @@ export const ignoredHelper = internalQuery({
   args: {},
   handler: async () => 4,
 });
+
+// Referenced from ../scripts/anyapi.ts via `anyApi.funcs.anyApiCalled` — alive.
+export const anyApiCalled = internalQuery({
+  args: {},
+  handler: async () => 5,
+});
+
+// Referenced from ../.claude/skills/check/script.mjs (a dot-directory) via an
+// `anyApi` chain — alive. Guards the dot-dir glob AND anyApi support together,
+// the exact shape agent skills use.
+export const dotDirCalled = internalQuery({
+  args: {},
+  handler: async () => 6,
+});
