@@ -1,6 +1,6 @@
 {
   "name": "@fagnersales/convex-doctor",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "Static analyzer for Convex: returns-validator drift + best-practice lints, before deploy.",
   "license": "MIT",
   "type": "module",
