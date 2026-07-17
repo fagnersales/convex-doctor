@@ -169,6 +169,7 @@ export function run(opts: RunOptions): RunResult {
         returnsValidator: p.returnsValidator,
         returnsValidatorLine: p.returnsLine,
         intents: [{ kind: "unanalyzed", reason: "handler is not an inline or resolvable named function" }],
+        keep: p.keep,
       };
       collected.push(fn);
       scanned += 1;
@@ -191,6 +192,7 @@ export function run(opts: RunOptions): RunResult {
         returnsValidator: p.returnsValidator,
         returnsValidatorLine: p.returnsLine,
         intents,
+        keep: p.keep,
       };
       collected.push(fn);
       scanned += 1;
@@ -306,7 +308,21 @@ type Pending = {
   returnsLine: number;
   handlerNode: Node;
   argsShape: Map<string, import("./types.ts").FieldShape> | undefined;
+  keep: boolean;
 };
+
+/**
+ * `// convex-doctor: keep` (or the same inside a block/JSDoc comment) on the
+ * line(s) above an export marks it as externally invoked — `npx convex run`,
+ * a cron in another repo, a webhook — so dead-function detection must treat
+ * it as alive. The directive is matched strictly (`convex-doctor: keep`) so
+ * prose that merely mentions the tool can't accidentally suppress a finding.
+ */
+const KEEP_DIRECTIVE = /convex-doctor:\s*keep\b/i;
+
+function hasKeepComment(stmt: Node): boolean {
+  return stmt.getLeadingCommentRanges().some((r) => KEEP_DIRECTIVE.test(r.getText()));
+}
 
 function collectPending(sf: SourceFile, project: Project): Pending[] {
   const out: Pending[] = [];
@@ -356,6 +372,7 @@ function collectPending(sf: SourceFile, project: Project): Pending[] {
         returnsLine,
         handlerNode,
         argsShape: argsShapeMap,
+        keep: hasKeepComment(stmt),
       });
     }
   }

@@ -87,7 +87,23 @@ Foreign-key joins (`ctx.db.get(row.fkId)`), enrichment spreads (`{ ...row, relat
 
 ## Dead-function detection
 
-Optional. `--dead` builds a call graph across the project — resolving `api.*` / `internal.*` chains through barrel re-exports — and lists every Convex function no caller reaches. Use `--dead-only` to print just the list, `--ignore-dead <pattern>` to exclude known entry points (`*` wildcard, repeatable), and `--project-root <path>` to widen the caller scan beyond the parent of `--convex-dir`.
+Optional. `--dead` builds a call graph across the project and lists every Convex function no caller reaches. Two kinds of references count:
+
+- `api.*` / `internal.*` chains, resolved through barrel re-exports;
+- string function names — `"path/to/file:fn"` literals as used by `npx convex run` in scripts, `ConvexHttpClient#query(name)`, or fixture inventories. Only strings that resolve to a real function (barrels included) count.
+
+**Dead means unreachable, not just unreferenced.** A reference coming from a function that is itself dead — or from a self-call, like a paged migration re-scheduling itself — grants no life. So an orphaned entry point takes its whole private-helper cluster into the dead list in one pass. Entries that are only reachable *from* dead code are marked `(referenced only by dead code)` in text output and listed under `transitive` in `--json`.
+
+The analysis can only see this repo. For functions invoked from the outside — another service, a webhook consumer, ops running `npx convex run` by hand — either use `--ignore-dead <pattern>`, or (better, because it lives next to the code and documents *why*) put a keep comment on the line above the export:
+
+```ts
+// convex-doctor: keep — run manually by ops during incident cleanup
+export const requeueStuckJobs = internalMutation({ ... });
+```
+
+Ignored and kept functions are treated as live roots: they're excluded from the dead list **and** everything they call stays alive.
+
+Use `--dead-only` to print just the list, `--ignore-dead <pattern>` to exclude entry points by glob (`*` wildcard, repeatable), and `--project-root <path>` to widen the caller scan beyond the parent of `--convex-dir`.
 
 ```bash
 bunx @fagnersales/convex-doctor --convex-dir convex --dead-only --ignore-dead 'migrations:*'
@@ -106,8 +122,9 @@ agent-guide              Print the agentic fix-loop recipe
 --strict                 Exit nonzero if any warnings are present
 --no-lint                Skip the best-practice lints (drift checks only)
 --dead                   Print the dead-function list after the regular report
---dead-only              Print only the dead list (or dead+ignored under --json)
---ignore-dead <pattern>  Glob (`*` wildcard) excluding nodes from the dead list. Repeatable
+--dead-only              Print only the dead list (or dead/transitive/ignored/kept under --json)
+--ignore-dead <pattern>  Glob (`*` wildcard) excluding nodes from the dead list; matches
+                         count as live roots so their callees survive too. Repeatable
 --project-root <path>    Root scanned for callers (used by --dead). Default: parent of <convex-dir>
 -h, --help               Show help
 ```

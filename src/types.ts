@@ -95,6 +95,10 @@ export interface FunctionInfo {
   returnsValidator: Shape | null;
   returnsValidatorLine: number;
   intents: ReturnIntent[];
+  /** True when a `convex-doctor: keep` comment precedes the export — the
+   *  function is invoked externally (`npx convex run`, another repo, a
+   *  webhook) and must never be reported dead. */
+  keep?: boolean;
 }
 
 export type IssueSeverity = "error" | "warn" | "info";
@@ -243,11 +247,17 @@ export interface GraphNode {
   filePath: string;
   line: number;
   kind: FunctionInfo["kind"];
-  /** Number of incoming edges. `dead` iff `incoming === 0` and !ignored. */
+  /** Number of incoming edges. Note a node can have incoming > 0 and still be
+   *  dead: dead = unreachable from any external caller, so edges from other
+   *  dead functions (or from itself) don't count as life. */
   incoming: number;
   outgoing: number;
-  /** True when id matches a `--ignore-dead` pattern — excluded from dead. */
+  /** True when id matches a `--ignore-dead` pattern — excluded from dead and
+   *  treated as a live root (its callees stay alive). */
   ignored?: boolean;
+  /** True when the definition carries a `convex-doctor: keep` comment —
+   *  excluded from dead and treated as a live root, like `ignored`. */
+  kept?: boolean;
 }
 
 /**
@@ -271,8 +281,13 @@ export interface CallGraph {
   /** External caller pseudo-nodes (one per file that calls into Convex). */
   externals: { id: string; filePath: string; outgoing: number }[];
   edges: GraphEdge[];
-  /** Node ids with zero incoming edges. */
+  /** Node ids unreachable from every external caller (and not ignored/kept).
+   *  Includes both directly-unreferenced functions and functions referenced
+   *  only by other dead functions or by themselves. */
   dead: string[];
+  /** Subset of `dead` with incoming > 0 — referenced, but only from dead
+   *  code (or a self-call). Deleting their dead callers orphans them. */
+  deadTransitive: string[];
   /** Files scanned for callers. */
   scannedFiles: number;
 }

@@ -387,7 +387,9 @@ export function reportJson(result: RunResult): string {
   const graph = result.graph
     ? {
         dead: result.graph.dead,
+        deadTransitive: result.graph.deadTransitive,
         ignored: result.graph.nodes.filter((n) => n.ignored).map((n) => n.id),
+        kept: result.graph.nodes.filter((n) => n.kept).map((n) => n.id),
         nodeCount: result.graph.nodes.length,
         edgeCount: result.graph.edges.length,
         scannedFiles: result.graph.scannedFiles,

@@ -67,14 +67,26 @@ function resolveChain(
  *   - Otherwise the caller is a synthetic `external:<relpath>` node — used
  *     for React hooks (`useQuery(api.x.y)`), crons, fetchQuery, etc.
  *
- * Functions with zero incoming edges are reported as `dead`.
+ * Besides `api.x.y` chains, string literals of the form `"path/to/file:fn"`
+ * that resolve to a known function count as references too — they're how
+ * `npx convex run`, `ConvexHttpClient#query(name)`, and fixture inventories
+ * invoke functions by name.
+ *
+ * Dead = unreachable from every external caller. A reference from a function
+ * that is itself dead (or a self-call) does not keep its target alive — so
+ * whole orphaned clusters (dead entry point + its private helpers) are
+ * reported in one pass instead of surfacing layer-by-layer as you delete.
+ * Nodes matched by `--ignore-dead` or carrying a `convex-doctor: keep`
+ * comment are treated as live roots: they're excluded from the dead list AND
+ * everything they call stays alive.
  */
 export interface BuildGraphInput {
   convexDir: string;
   projectRoot: string;
   functions: FunctionInfo[];
   /** Glob patterns (`*` only). Nodes whose id matches any are excluded
-   *  from the dead list and flagged `ignored` for the renderer. */
+   *  from the dead list, flagged `ignored` for the renderer, and treated
+   *  as live roots (their callees stay alive). */
   ignoreDead?: string[];
 }
 
@@ -108,6 +120,7 @@ export function buildGraph(input: BuildGraphInput): CallGraph {
       kind: fn.kind,
       incoming: 0,
       outgoing: 0,
+      ...(fn.keep ? { kept: true } : {}),
     });
   }
   // Fresh ts-morph project covering the whole repo for caller discovery.
@@ -140,28 +153,14 @@ export function buildGraph(input: BuildGraphInput): CallGraph {
 
   for (const sf of project.getSourceFiles()) {
     const fp = sf.getFilePath();
-    // Don't double-count the function's own definition site as a self-call.
-    // (definitions don't reference `api.x.y` to themselves, but be safe.)
-    sf.forEachDescendant((node) => {
-      // Identifier `api` or `internal` is the root of every chain we care about.
-      if (!Node.isIdentifier(node)) return;
-      const text = node.getText();
-      if (text !== "api" && text !== "internal") return;
-      // Skip the import declaration itself (`import { api } from ...`).
-      if (insideImportDecl(node)) return;
-      const chain = readChain(node);
-      if (!chain) return;
-      const id = lookupNode(chain, nodes, project, convexDir);
-      if (!id) return;
-
-      const callerId = enclosingCallerId(node, convexDir, nodes) ??
+    const addEdge = (refNode: Node, id: string, via: string): void => {
+      const callerId = enclosingCallerId(refNode, convexDir, nodes) ??
         externalId(fp, projectRoot);
-      const line = node.getStartLineNumber();
+      const line = refNode.getStartLineNumber();
       const dedupeKey = `${callerId}→${id}@${fp}:${line}`;
       if (dedupe.has(dedupeKey)) return;
       dedupe.add(dedupeKey);
 
-      const via = detectVia(node);
       edges.push({ from: callerId, to: id, filePath: fp, line, via });
 
       const tgt = nodes.get(id);
@@ -179,6 +178,34 @@ export function buildGraph(input: BuildGraphInput): CallGraph {
         ext.outgoing += 1;
         externals.set(callerId, ext);
       }
+    };
+
+    // Don't double-count the function's own definition site as a self-call.
+    // (definitions don't reference `api.x.y` to themselves, but be safe.)
+    sf.forEachDescendant((node) => {
+      // `"path/to/file:fn"` string literals — `npx convex run` in scripts,
+      // ConvexHttpClient#query(name), fixture inventories. Only strings that
+      // resolve to a known definition (barrels included) become edges, so
+      // ordinary prose containing a colon can't create phantom references.
+      if (Node.isStringLiteral(node) || Node.isNoSubstitutionTemplateLiteral(node)) {
+        const text = node.getLiteralText();
+        if (!STRING_REF_RE.test(text)) return;
+        const [relPath, exportName] = text.split(":") as [string, string];
+        const id = resolveChain(relPath, exportName, nodes, project, convexDir, new Set());
+        if (id) addEdge(node, id, "string-ref");
+        return;
+      }
+      // Identifier `api` or `internal` is the root of every chain we care about.
+      if (!Node.isIdentifier(node)) return;
+      const text = node.getText();
+      if (text !== "api" && text !== "internal") return;
+      // Skip the import declaration itself (`import { api } from ...`).
+      if (insideImportDecl(node)) return;
+      const chain = readChain(node);
+      if (!chain) return;
+      const id = lookupNode(chain, nodes, project, convexDir);
+      if (!id) return;
+      addEdge(node, id, detectVia(node));
     });
   }
 
@@ -186,18 +213,50 @@ export function buildGraph(input: BuildGraphInput): CallGraph {
   for (const n of nodeArr) {
     if (isIgnored(n.id)) n.ignored = true;
   }
-  const dead = nodeArr
-    .filter((n) => n.incoming === 0 && !n.ignored)
-    .map((n) => n.id);
+
+  // Dead = unreachable from any live root. Roots are the external caller
+  // pseudo-nodes plus every ignored/kept node (declared alive, so whatever
+  // they call must survive too). Walking reachability instead of testing
+  // `incoming === 0` means edges from dead functions — including self-calls,
+  // e.g. a paged migration that re-schedules itself — grant no life.
+  const adjacency = new Map<string, string[]>();
+  for (const e of edges) {
+    const list = adjacency.get(e.from);
+    if (list) list.push(e.to);
+    else adjacency.set(e.from, [e.to]);
+  }
+  const stack = [
+    ...externals.keys(),
+    ...nodeArr.filter((n) => n.ignored || n.kept).map((n) => n.id),
+  ];
+  const reachable = new Set<string>(stack);
+  while (stack.length > 0) {
+    const cur = stack.pop()!;
+    for (const next of adjacency.get(cur) ?? []) {
+      if (!reachable.has(next)) {
+        reachable.add(next);
+        stack.push(next);
+      }
+    }
+  }
+  const deadNodes = nodeArr.filter((n) => !reachable.has(n.id));
+  const dead = deadNodes.map((n) => n.id);
+  const deadTransitive = deadNodes.filter((n) => n.incoming > 0).map((n) => n.id);
 
   return {
     nodes: nodeArr,
     externals: [...externals.values()],
     edges,
     dead,
+    deadTransitive,
     scannedFiles: project.getSourceFiles().length,
   };
 }
+
+/** Shape of a string function reference: `<relPath>:<exportName>`, where the
+ *  path may contain `/` segments. Kept tight so arbitrary colon-bearing
+ *  strings (URLs, times, prose) are rejected before any resolution work. */
+const STRING_REF_RE = /^[A-Za-z0-9_$][A-Za-z0-9_$/.-]*:[A-Za-z0-9_$]+$/;
 
 function fnId(convexDir: string, fn: FunctionInfo): string | null {
   const rel = pathRelative(convexDir, fn.filePath).replace(/\.tsx?$/, "");

@@ -132,13 +132,24 @@ Options:
   --project-root <path>    Root scanned for callers (used by --dead).
                            Default: parent of <convex-dir>
   --ignore-dead <pattern>  Glob pattern (\`*\` wildcard) excluding nodes
-                           from the dead list. Repeatable.
+                           from the dead list. Matching nodes count as live
+                           roots, so their callees stay alive too. Repeatable.
                            Examples: 'migrations:*', '*:migrate*'
   --dead                   Print the dead-function list to stdout (one
                            id per line, after the regular report).
+                           Dead = unreachable from every external caller;
+                           references from other dead functions (or a
+                           self-call) don't keep a function alive.
+                           String references ("path/file:fn" literals, as
+                           used by \`npx convex run\` in scripts) count as
+                           callers. To protect a function that is invoked
+                           from outside the repo (another service, manual
+                           \`npx convex run\`, a webhook), put a comment on
+                           the line above its export:
+                             // convex-doctor: keep — run manually by ops
   --dead-only              Suppress the regular report; print only the
-                           dead list (text) or only the dead+ignored
-                           arrays (when combined with --json).
+                           dead list (text) or the dead/transitive/
+                           ignored/kept arrays (when combined with --json).
   -h, --help               Show this help
 
 Exit codes:
@@ -264,8 +275,20 @@ if (opts.deadOnly) {
     const ignored = result.graph
       ? result.graph.nodes.filter((n) => n.ignored).map((n) => n.id)
       : [];
+    const kept = result.graph
+      ? result.graph.nodes.filter((n) => n.kept).map((n) => n.id)
+      : [];
     process.stdout.write(
-      JSON.stringify({ dead: result.graph?.dead ?? [], ignored }, null, 2) + "\n",
+      JSON.stringify(
+        {
+          dead: result.graph?.dead ?? [],
+          transitive: result.graph?.deadTransitive ?? [],
+          ignored,
+          kept,
+        },
+        null,
+        2,
+      ) + "\n",
     );
   } else if (result.graph) {
     for (const id of result.graph.dead) process.stdout.write(id + "\n");
@@ -282,8 +305,17 @@ if (opts.deadOnly) {
   if (opts.printDead && result.graph) {
     if (opts.format !== "json") {
       const g = result.graph;
+      const transitive = new Set(g.deadTransitive);
       process.stdout.write(`\nDead functions (${g.dead.length}):\n`);
-      for (const id of g.dead) process.stdout.write(`  ${id}\n`);
+      for (const id of g.dead) {
+        const note = transitive.has(id) ? "   (referenced only by dead code)" : "";
+        process.stdout.write(`  ${id}${note}\n`);
+      }
+      const kept = g.nodes.filter((n) => n.kept);
+      if (kept.length > 0) {
+        process.stdout.write(`Kept alive by \`convex-doctor: keep\` comments (${kept.length}):\n`);
+        for (const n of kept) process.stdout.write(`  ${n.id}\n`);
+      }
     }
   }
 }
