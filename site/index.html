@@ -32,10 +32,9 @@
         <span class="mono-label on-dark">Static analysis · Convex · Built for agents</span>
         <h1>Your agent ships faster with Convex. <span class="accent">Is it wasting time on dumb mistakes?</span></h1>
         <p class="sub">
-          Convex is the agent backend — and agents write most of the code now. convex-doctor is the
-          <strong>deterministic check</strong> on what they ship: returns validators that throw on the first
-          real row, queries that scan whole tables, functions nobody reaches. One pass, before deploy —
-          each finding with a <strong>fix recipe your agent can apply</strong>.
+          The <strong>deterministic check</strong> on agent-written Convex: validator drift, table-scanning
+          queries, dead functions. One pass before deploy — every finding with a
+          <strong>fix recipe your agent can apply</strong>.
         </p>
         <div class="cta-row">
           <a class="btn primary lg" href="#quickstart">Run it on your repo</a>
@@ -119,16 +118,12 @@
     <div class="feature-grid" style="margin-top: 34px;">
       <div>
         <p class="lede">
-          A <code style="font-family: var(--font-mono); font-size: 13px;">returns</code> validator is a promise
-          about what your function sends back. Your agent adds the field, ships the feature — and never
-          touches the validator. TypeScript can't see the drift. Convex enforces it at runtime.
-        </p>
-        <p class="lede" style="margin-top: 16px;">
-          convex-doctor walks <strong>schema → validator → every return path of the handler</strong> and diffs
-          all three. It understands the code you actually write: foreign-key joins, enrichment spreads,
-          <code style="font-family: var(--font-mono); font-size: 13px;">.paginate()</code> envelopes, null guards,
-          both-branch ternaries, <code style="font-family: var(--font-mono); font-size: 13px;">Promise.all</code> maps,
-          and validators imported across files.
+          Your agent adds the field, ships the feature — and never touches the
+          <code style="font-family: var(--font-mono); font-size: 13px;">returns</code> validator.
+          TypeScript can't see it; Convex throws at runtime. convex-doctor diffs
+          <strong>schema → validator → every return path</strong> — through joins, spreads,
+          <code style="font-family: var(--font-mono); font-size: 13px;">.paginate()</code> envelopes,
+          and cross-file imports.
         </p>
         <div class="codes">
           <span class="mono-label danger">Missing_field</span>
@@ -176,10 +171,8 @@
       </div>
       <h2 class="sec">The whole guide,<br>enforced.</h2>
       <p class="lede">
-        Every rule from the <strong>Convex best-practices guide</strong> and the official
-        <strong>eslint-plugin</strong> — plus the ones they don't ship — in a single pass with no install
-        and no config. Each diagnostic explains <strong>why it matters</strong>, shows a concrete fix,
-        and deep-links the exact doc section it enforces — written for whoever's reading, human or agent.
+        The <strong>best-practices guide</strong>, the official <strong>eslint-plugin</strong>, and the rules
+        they don't ship — one pass, no install, no config. Every diagnostic: why, fix, doc link.
       </p>
 
       <div class="rule-grid">
@@ -251,16 +244,15 @@
     <div class="feature-grid" style="margin-top: 34px;">
       <div>
         <p class="lede">
-          <code style="font-family: var(--font-mono); font-size: 13px;">--dead</code> builds a call graph across
-          your whole project and lists every Convex function no caller reaches. A reference from a function
-          that is itself dead grants no life — so an orphaned entry point drags its entire private-helper
-          cluster into the dead list in one pass.
+          <code style="font-family: var(--font-mono); font-size: 13px;">--dead</code> builds a project-wide
+          call graph and lists every function no caller reaches. Dead callers grant no life — an orphaned
+          entry point drags its whole helper cluster with it.
         </p>
         <ul class="checklist" style="margin-top: 26px;">
           <li><span class="tick">✓</span><div><strong>api.* / internal.* chains</strong> — resolved through barrel re-exports.</div></li>
-          <li><span class="tick">✓</span><div><strong>String function names</strong> — <code style="font-family: var(--font-mono); font-size: 12px;">"path/file:fn"</code> literals from <code style="font-family: var(--font-mono); font-size: 12px;">npx convex run</code> scripts and HTTP clients count as callers.</div></li>
-          <li><span class="tick">✓</span><div><strong>Self-calls don't count</strong> — a paged migration re-scheduling itself is not "alive".</div></li>
-          <li><span class="tick">✓</span><div><strong>Keep comments</strong> — document <em>why</em> an external entry point stays, right next to the code.</div></li>
+          <li><span class="tick">✓</span><div><strong>String function names</strong> — <code style="font-family: var(--font-mono); font-size: 12px;">"path/file:fn"</code> literals count as callers.</div></li>
+          <li><span class="tick">✓</span><div><strong>Self-calls don't count</strong> — a migration re-scheduling itself is not "alive".</div></li>
+          <li><span class="tick">✓</span><div><strong>Keep comments</strong> — document why an entry point stays, next to the code.</div></li>
         </ul>
       </div>
 
@@ -294,29 +286,28 @@
       </div>
       <h2 class="sec" style="color: var(--surface-cream);">Built to be driven<br>by an agent.</h2>
       <p class="lede" style="color: rgba(246,238,219,.75);">
-        An agent wrote most of this code — so hand the findings straight back to it. Don't dump 455 issues
-        into a context window: convex-doctor works <strong style="color: var(--surface-cream);">one rule code at a time</strong>.
-        The agent locks a group, fixes every site with one shared recipe, re-scans to verify, commits, and moves on.
-        The loop converges to zero — in clean, reviewable, per-group commits.
+        Don't dump 455 issues into a context window — work
+        <strong style="color: var(--surface-cream);">one rule code at a time</strong>:
+        lock a group, fix every site, re-scan, commit. The loop converges to zero.
       </p>
 
       <div class="steps">
         <div class="step-card">
           <div class="n">Step 1 · The menu</div>
           <h3>List fixable groups</h3>
-          <p>One tiny line per rule code, priority-ordered: errors first, then warnings, then info.</p>
+          <p>One line per rule code, errors first.</p>
           <code>$ convex-doctor groups --json</code>
         </div>
         <div class="step-card">
           <div class="n">Step 2 · The batch</div>
           <h3>Lock one group</h3>
-          <p>A bounded work-list: the shared recipe once, then just file · line · function per site.</p>
+          <p>The shared recipe once, then file · line · function per site.</p>
           <code>$ convex-doctor <span style="white-space: nowrap;">--only AWAIT_IN_LOOP</span> <span style="white-space: nowrap;">--json</span></code>
         </div>
         <div class="step-card">
           <div class="n">Step 3 · The cursor</div>
           <h3>Re-scan to verify</h3>
-          <p>Fixed sites vanish from the next run — re-scanning is the cursor. Loop until total is 0, commit the group.</p>
+          <p>Fixed sites vanish from the next run. Loop to zero, commit.</p>
           <code>$ convex-doctor agent-guide</code>
         </div>
       </div>
@@ -328,22 +319,22 @@
         <div class="autofix">
           <div class="cell">
             <span class="mono-label" style="background: var(--color-green); color: var(--color-n12); border-color: transparent;">Mechanical</span>
-            <p>The diagnostic fully determines the edit — remove or move a line. Safe to apply without reading around it.</p>
+            <p>The diagnostic fully determines the edit. Safe to apply blind.</p>
           </div>
           <div class="cell">
             <span class="mono-label solid">Guided</span>
-            <p>A deterministic recipe, but the agent reads local context first — the schema type, the loop body, the query chain.</p>
+            <p>A deterministic recipe — read the local context first.</p>
           </div>
           <div class="cell">
             <span class="mono-label danger">Manual</span>
-            <p>Architectural, cross-file, or data-migration judgment. Reason carefully; maybe ask a human.</p>
+            <p>Cross-file or data-migration judgment. Maybe ask a human.</p>
           </div>
         </div>
         <div style="margin-top: 30px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap;">
           <span class="code-chip" style="background: rgba(20,20,20,.35); border-color: transparent;"><span class="prompt">claude&gt;</span> /convex-fix</span>
           <p style="margin: 0; font-size: 14px; color: rgba(246,238,219,.75);">
             Install the <a href="https://github.com/fagnersales/convex-doctor/blob/master/skills/convex-fix/SKILL.md" style="color: var(--color-yellow);">/convex-fix skill</a>
-            and your agent runs the whole loop itself — audit, fix, verify, commit.
+            — your agent runs the loop itself: audit, fix, verify, commit.
           </p>
         </div>
       </div>
@@ -362,9 +353,9 @@
           </div>
           <h2 class="sec" style="color: var(--surface-cream);">Wire it into<br>typecheck.</h2>
           <p class="lede" style="color: rgba(246,238,219,.8);">
-            No install step, no config file. Run it once inside any Convex project — then make it part of
-            every push with <code style="font-family: var(--font-mono); font-size: 13px;">--json</code>
-            (a versioned, CI-friendly contract) and <code style="font-family: var(--font-mono); font-size: 13px;">--strict</code>.
+            No install, no config. Run it in any Convex project — make it part of every push with
+            <code style="font-family: var(--font-mono); font-size: 13px;">--json</code> and
+            <code style="font-family: var(--font-mono); font-size: 13px;">--strict</code>.
           </p>
           <div class="exit-codes">
             <div class="row2"><span class="ec">exit 0</span><span>no errors — deploy away</span></div>
