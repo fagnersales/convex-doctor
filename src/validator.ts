@@ -278,7 +278,15 @@ function resolveNested(
           continue;
         }
         const r = resolveRef(v.shape, sourceFile, project, seen);
-        next.set(k, { shape: r, optional: v.optional, loc: v.loc });
+        // A field written as `metadata: metaValidator` where the const is
+        // v.optional(...) carries its optionality inside the resolved shape,
+        // not in the syntactic field flag — fold it into the flag, like the
+        // parse-time unwrap does for inline v.optional(...) fields.
+        if (r.kind === "optional") {
+          next.set(k, { shape: r.inner, optional: true, loc: v.loc });
+        } else {
+          next.set(k, { shape: r, optional: v.optional, loc: v.loc });
+        }
       }
       return { ...shape, fields: next };
     }

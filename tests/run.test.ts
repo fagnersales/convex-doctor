@@ -117,6 +117,14 @@ describe("optionality mismatch (R3)", () => {
     const opt = issues.find((i) => i.code === "OPTIONALITY_MISMATCH")!;
     expect(opt.message).toContain("description");
   });
+
+  // Found in the wild (ajanraj/OpenChat): `metadata: metaValidator` where the
+  // const is v.optional(...) — the wrapper lives in the resolved ref, not at
+  // the field site, and must still count as optional.
+  test("no false positive when optionality comes through a const reference", () => {
+    const { issues } = go("ref-optional-field");
+    expect(issues).toEqual([]);
+  });
 });
 
 describe("stale field (R2)", () => {
