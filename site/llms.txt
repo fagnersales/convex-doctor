@@ -1,0 +1,84 @@
+# convex-doctor
+
+> Deterministic static analysis for Convex codebases. It catches the runtime errors TypeScript can't see — validator drift, table-scanning queries, dead functions — and every finding ships with a fix recipe an agent can apply. Built to be driven by AI agents: "Convex is the best backend for your agent. convex-doctor keeps it that way."
+
+convex-doctor runs one pass over any Convex project before deploy — no install, no config, CI-ready. It is distributed on npm as `@fagnersales/convex-doctor` and run with `bunx @fagnersales/convex-doctor`. MIT licensed. Not affiliated with Convex, Inc.
+
+## What it checks
+
+- **Drift engine**: diffs schema → validator → every return path (through joins, spreads, `.paginate()` envelopes, and cross-file imports) to catch validator drift that TypeScript can't see but Convex throws on at runtime. Codes: `Missing_field`, `Stale_field`, `Null_branch_missing`, `Optionality_mismatch`, `Cardinality_mismatch`, `Type_mismatch`, `Extra_literal_field`, `Missing_literal_field`.
+- **Best-practice lints**: the Convex best-practices guide, the official eslint-plugin rules, and rules they don't ship — one pass, no config, each diagnostic with why/fix/doc link. Rules include `Filter_in_query`, `Await_in_loop`, `Unbounded_collect`, `Fetch_in_query`, `Db_in_action`, `Nondeterministic_query`, `Schedule_public_fn`, `Floating_ctx_promise`, `Missing_arg_validator`, `Query_in_node_file`, `Duplicate_cron_id`, `Redundant_index`, `Wrong_runtime_import`, `Node_builtin_without_use_node`, `Misplaced_use_node`, `Sequential_ctx_run`, `Cron_public_fn`, `Old_function_syntax`, `Schema_validation_disabled`, and more.
+- **Dead-function detection** (`--dead`): builds a project-wide call graph and lists every function no caller reaches. Resolves `api.*`/`internal.*` chains through barrel re-exports, counts `"path/file:fn"` string literals as callers, ignores self-calls, and honors `// convex-doctor: keep` comments to preserve manual entry points.
+
+## Installation
+
+There is no install step and no config file. convex-doctor runs on [Bun](https://bun.sh) — the only prerequisite — and is executed directly with `bunx`:
+
+- Audit any Convex project: `bunx @fagnersales/convex-doctor`
+- Non-default Convex dir: `bunx @fagnersales/convex-doctor --convex-dir backend/convex`
+- Full/strict CI run: `bunx @fagnersales/convex-doctor --dead --strict --json`
+- Exit codes: `0` no errors (deploy away); `1` errors found (or warnings under `--strict`); `2` bad arguments.
+
+Wire it into typecheck so it runs on every push (`package.json`):
+
+```jsonc
+"scripts": {
+  "doctor": "bunx @fagnersales/convex-doctor",
+  "typecheck": "tsgo --noEmit && bun doctor"
+}
+```
+
+## CLI reference
+
+```
+groups                   List fixable groups (one per rule code), priority-ordered
+agent-guide              Print the agentic fix-loop recipe
+--convex-dir <path>      Path to convex/ directory. Default: convex
+--schema <path>          Path to schema.ts. Default: <convex-dir>/schema.ts
+--only <code|category>   Restrict the report to one rule code or category (the agentic unit)
+--limit <n>              Cap --only work-lists (default 20; 0 = all)
+--include-unanalyzed     Print INFO entries for unanalyzed handlers
+--json                   Emit JSON instead of text (versioned, CI-friendly)
+--strict                 Exit nonzero if any warnings are present
+--no-lint                Skip the best-practice lints (drift checks only)
+--dead                   Print the dead-function list after the regular report
+--dead-only              Print only the dead list
+--ignore-dead <pattern>  Glob excluding entry points from the dead list. Repeatable
+--project-root <path>    Root scanned for callers. Default: parent of <convex-dir>
+-h, --help               Show help
+```
+
+## Suppressing findings
+
+- Silence one finding, with a reason: `// convex-doctor: ignore <CODE> — reason` above the flagged line. The code is required; a different issue on the same line still surfaces.
+- Keep a dead-listed entry point alive: `// convex-doctor: keep — reason` above the export. Kept and `--ignore-dead <glob>` functions are live roots — everything they call stays alive too.
+
+## Programmatic API
+
+```ts
+import { run, reportText, exitCode } from "@fagnersales/convex-doctor";
+
+const result = run({ convexDir: "convex", lint: true });
+console.log(reportText(result));
+process.exit(exitCode(result, false));
+```
+
+`reportJson` and `buildGraph` are exported alongside `run`.
+
+## Agentic fix loop
+
+convex-doctor is designed for an agent to fix its own findings one rule code at a time instead of dumping every issue into a context window:
+
+1. List fixable groups: `bunx @fagnersales/convex-doctor groups --json`
+2. Lock one group: `bunx @fagnersales/convex-doctor --only <CODE> --json` (returns the shared recipe plus file · line · function per site)
+3. Fix every site with the group's recipe, then re-scan until the group reads zero, then commit. Repeat until the scan is clean.
+
+Each group is tagged by how much judgment the fix needs: **Mechanical** (diagnostic fully determines the edit, safe to apply blind), **Guided** (deterministic recipe, read local context first), **Manual** (cross-file or data-migration judgment, may need a human).
+
+## Links
+
+- Website: https://convex-doctor.fagner.ink/
+- GitHub: https://github.com/fagnersales/convex-doctor
+- npm: https://www.npmjs.com/package/@fagnersales/convex-doctor
+- /convex-fix agent skill: https://github.com/fagnersales/convex-doctor/blob/master/skills/convex-fix/SKILL.md
+- Convex best practices: https://docs.convex.dev/understanding/best-practices/
