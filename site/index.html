@@ -432,7 +432,7 @@ Repeat until the scan is clean.</pre>
     var y = window.scrollY, dy = y - lastY;
     lastY = y;
     if (dy <= 0 || dragging) return; // only scrolling down blows on the wheel
-    vel = Math.min(MAX, vel + dy * 0.035);
+    vel = Math.max(-MAX, vel - dy * 0.035); // blades catch the wind counter-clockwise
     kick();
   }, { passive: true });
 
