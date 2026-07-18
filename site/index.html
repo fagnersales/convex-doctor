@@ -41,9 +41,9 @@
     </nav>
 
     <div class="hero-grid">
-      <div>
+      <div class="hero-copy">
         <span class="mono-label on-dark">Static analysis · Convex · Built for agents</span>
-        <h1>Your agent ships faster with Convex. <span class="accent">Is it wasting time on dumb mistakes?</span></h1>
+        <h1>Convex is the best backend for your agent. <span class="accent">convex-doctor keeps it that way.</span></h1>
         <p class="sub">
           The <strong>deterministic check</strong> on agent-written Convex: validator drift, table-scanning
           queries, dead functions. One pass before deploy — every finding with a
@@ -58,34 +58,11 @@
         </div>
       </div>
 
-      <div class="terminal">
-        <div class="bar">
-          <span class="dot" style="background: var(--color-red)"></span>
-          <span class="dot" style="background: var(--color-yellow)"></span>
-          <span class="dot" style="background: var(--color-plum)"></span>
-          <span class="title">convex-doctor · one pass</span>
+      <div class="hero-pin">
+        <div class="pin-stack">
+          <img class="pin-stick" src="assets/pinwheel-stick.png" alt="">
+          <img class="pin-wheel" src="assets/pinwheel-wheel.png" alt="">
         </div>
-        <pre><span class="t-dim">$</span> <span class="t-cmd">bunx @fagnersales/convex-doctor</span>
-
-  convex-doctor
-
-  <span class="t-err">3 functions will throw ReturnsValidationError.</span>
-
-  <span class="t-err">✖ 3 errors</span>   <span class="t-warn">⚠ 15 warnings</span>   <span class="t-dim">ℹ 6 info · 48 fns · 883ms</span>
-
-  <span class="t-err">✖ MISSING_FIELD</span> <span class="t-dim">· validator omits a schema field</span>
-     <span class="t-dim">users.ts:31 · getUser</span>
-
-     <span class="t-dim">30 │</span>   <span class="t-prop">returns</span>: <span class="t-fn">v.object</span>({
-     <span class="t-dim">31 │</span>     <span class="t-prop">name</span>: <span class="t-fn">v.string</span>(),
-     <span class="t-dim">   │</span>     <span class="t-caret">^^^^</span> <span class="t-dim">schema `users` also requires `email`</span>
-     <span class="t-dim">32 │</span>   }),
-
-     <span class="t-warn">why</span>  <span class="t-dim">the first real row returned fails validation
-          at runtime — typecheck never sees it.</span>
-     <span class="t-ok">fix</span>  <span class="t-dim">add</span> <span class="t-prop">email</span>: <span class="t-fn">v.string</span>() <span class="t-dim">to the validator.</span>
-
-     <span class="t-dim">docs https://docs.convex.dev/functions/validation</span></pre>
       </div>
     </div>
   </div>
@@ -95,7 +72,6 @@
     <div class="s-plum"></div>
   </div>
 </div>
-
 <!-- ═══════════════ STATS ═══════════════ -->
 <div class="stats">
   <div class="wrap">
@@ -455,6 +431,72 @@ Repeat until the scan is clean.</pre>
 </footer>
 
 <script>
+// pinwheel: scroll-down applies force, dragging spins it by hand, friction coasts it down
+(function () {
+  var wheel = document.querySelector('.pin-wheel');
+  if (!wheel || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  // max ~42°/frame: above ~45°/frame a 4-blade wheel strobes backwards
+  var MAX = 42;
+  var angle = 0, vel = 0, lastY = window.scrollY, raf = null, dragging = false;
+  function render() {
+    wheel.style.transform = 'rotate(' + angle + 'deg)';
+    var blur = Math.max(0, (Math.abs(vel) - 12) / 7);
+    wheel.style.filter = blur > 0.15 ? 'blur(' + blur.toFixed(2) + 'px)' : '';
+  }
+  function tick() {
+    if (dragging) { raf = null; return; }
+    vel *= 0.985;
+    angle += vel;
+    render();
+    raf = Math.abs(vel) > 0.02 ? requestAnimationFrame(tick) : null;
+  }
+  function kick() { if (!raf) raf = requestAnimationFrame(tick); }
+
+  addEventListener('scroll', function () {
+    var y = window.scrollY, dy = y - lastY;
+    lastY = y;
+    if (dy <= 0 || dragging) return; // only scrolling down blows on the wheel
+    vel = Math.min(MAX, vel + dy * 0.035);
+    kick();
+  }, { passive: true });
+
+  // drag anywhere on the wheel: it follows the pointer around the hub; release flings it
+  var lastPA = 0, lastT = 0, dragVel = 0;
+  function pointerAngle(e) {
+    var r = wheel.getBoundingClientRect(); // square rotating about its center: center is stable
+    return Math.atan2(e.clientY - (r.top + r.height / 2), e.clientX - (r.left + r.width / 2)) * 180 / Math.PI;
+  }
+  wheel.draggable = false;
+  wheel.addEventListener('pointerdown', function (e) {
+    dragging = true;
+    vel = 0; dragVel = 0;
+    lastPA = pointerAngle(e); lastT = e.timeStamp;
+    wheel.setPointerCapture(e.pointerId);
+    wheel.style.cursor = 'grabbing';
+    e.preventDefault();
+  });
+  wheel.addEventListener('pointermove', function (e) {
+    if (!dragging) return;
+    var pa = pointerAngle(e), d = pa - lastPA;
+    if (d > 180) d -= 360; else if (d < -180) d += 360;
+    lastPA = pa;
+    angle += d;
+    var dt = Math.max(1, e.timeStamp - lastT); lastT = e.timeStamp;
+    dragVel = 0.8 * dragVel + 0.2 * (d / dt * 16.7); // smoothed °/frame for the release fling
+    vel = dragVel; // so motion blur tracks the hand
+    render();
+  });
+  function endDrag() {
+    if (!dragging) return;
+    dragging = false;
+    wheel.style.cursor = '';
+    vel = Math.max(-MAX, Math.min(MAX, dragVel));
+    kick();
+  }
+  wheel.addEventListener('pointerup', endDrag);
+  wheel.addEventListener('pointercancel', endDrag);
+})();
+
 function copyAgentPrompt(btn) {
   const text = document.getElementById('agent-prompt').innerText;
   navigator.clipboard.writeText(text).then(() => {

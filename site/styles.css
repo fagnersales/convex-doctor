@@ -377,3 +377,29 @@ footer .spacer { flex: 1; }
 }
 .copy-btn:hover { filter: brightness(1.08); }
 .copy-btn.done, .btn.done { background: #72c043; color: var(--color-n12); }
+
+/* ── Hero v2 — banner-cream surface, spinning pinwheel (overrides the dark-hero defaults above) ── */
+.hero { background: #fff0d7; color: var(--text-body); }
+.hero nav.top .brand { color: var(--text-title); }
+.hero nav.top .brand .name span { color: var(--text-muted); }
+.hero nav.top .links a:not(.btn) { color: var(--text-muted); }
+.hero nav.top .links a:not(.btn):hover { color: var(--text-title); }
+.hero nav.top .links a.btn.outline,
+.hero nav.top .links a.btn.outline:hover { color: var(--color-n12); border-color: var(--border-light); }
+.hero nav.top .links a.btn.outline:hover { background: rgba(20,20,20,.06); }
+.hero .mono-label.on-dark { border-color: var(--border-light); color: var(--text-muted); }
+.hero h1 { color: var(--text-title); }
+.hero h1 .accent { color: var(--color-red); }
+.hero p.sub { color: var(--text-muted); }
+.hero p.sub strong { color: var(--text-title); }
+.hero .cta-row .btn.outline,
+.hero .cta-row .btn.outline:hover { color: var(--color-n12); border-color: var(--border-light); }
+.hero .cta-row .btn.outline:hover { background: rgba(20,20,20,.06); }
+
+.hero-grid { align-items: stretch; padding-bottom: 0; }
+.hero-copy { padding-bottom: 88px; }
+.hero-pin { display: flex; align-items: flex-end; justify-content: flex-end; min-height: 0; }
+.pin-stack { position: relative; width: 620px; margin-bottom: -4px; margin-right: -70px; }
+.pin-stick { display: block; width: 100%; height: auto; }
+.pin-wheel { position: absolute; left: 3.148%; top: 6.638%; width: 92.593%; will-change: transform; cursor: grab; touch-action: none; user-select: none; -webkit-user-drag: none; }
+@media (max-width: 960px) { .hero-pin { display: none; } .hero-copy { padding-bottom: 64px; } }
