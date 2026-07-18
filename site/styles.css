@@ -121,6 +121,16 @@ img { max-width: 100%; }
 .btn.outline { background: transparent; color: var(--surface-cream); border-color: var(--border-dark); }
 .btn.outline:hover { color: var(--surface-cream); filter: none; background: rgba(246, 238, 219, 0.08); }
 .btn.lg { padding: 14px 30px; font-size: 17px; }
+.btn.sm { padding: 8px 18px; font-size: 13px; }
+
+/* Nav buttons: undo the mono-link styling that leaks in from `nav.top .links a`
+   (its higher specificity made the npm pill grey, and cream-on-cream on hover) */
+nav.top .links a.btn {
+  font-family: var(--font-display); font-size: 13px; font-weight: 500;
+  letter-spacing: 0; text-transform: none;
+}
+nav.top .links a.btn.light, nav.top .links a.btn.light:hover { color: var(--color-n12); }
+nav.top .links a.btn.outline, nav.top .links a.btn.outline:hover { color: var(--surface-cream); }
 
 /* Section chrome */
 section { padding: 88px 0; }
