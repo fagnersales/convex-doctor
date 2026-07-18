@@ -313,7 +313,7 @@ nav.top .links a:hover { color: var(--surface-cream); }
   display: block; margin-top: 14px; font-family: var(--font-mono); font-size: 11.5px;
   letter-spacing: 0.02em; color: var(--surface-cream);
   background: rgba(20, 20, 20, 0.35); border-radius: var(--radius-sm);
-  padding: 8px 12px; overflow-x: auto; white-space: nowrap;
+  padding: 8px 12px; white-space: pre-wrap; overflow-wrap: break-word;
 }
 
 /* Autofix table */

@@ -311,7 +311,7 @@
           <div class="n">Step 2 · The batch</div>
           <h3>Lock one group</h3>
           <p>A bounded work-list: the shared recipe once, then just file · line · function per site.</p>
-          <code>$ convex-doctor --only AWAIT_IN_LOOP --json</code>
+          <code>$ convex-doctor <span style="white-space: nowrap;">--only AWAIT_IN_LOOP</span> <span style="white-space: nowrap;">--json</span></code>
         </div>
         <div class="step-card">
           <div class="n">Step 3 · The cursor</div>
@@ -388,15 +388,18 @@
 <span class="t-dim">$</span> <span class="t-cmd">bunx @fagnersales/convex-doctor</span>
 
 <span class="t-dim"># non-default convex dir</span>
-<span class="t-dim">$</span> <span class="t-cmd">bunx @fagnersales/convex-doctor --convex-dir backend/convex</span>
+<span class="t-dim">$</span> <span class="t-cmd">bunx @fagnersales/convex-doctor \
+    --convex-dir backend/convex</span>
 
 <span class="t-dim"># make it part of every push</span>
 <span class="t-prop">"scripts"</span>: {
-  <span class="t-prop">"typecheck"</span>: <span class="t-str">"tsgo --noEmit && bunx @fagnersales/convex-doctor"</span>
+  <span class="t-prop">"doctor"</span>: <span class="t-str">"bunx @fagnersales/convex-doctor"</span>,
+  <span class="t-prop">"typecheck"</span>: <span class="t-str">"tsgo --noEmit && bun doctor"</span>
 }
 
 <span class="t-dim"># the full physical</span>
-<span class="t-dim">$</span> <span class="t-cmd">bunx @fagnersales/convex-doctor --dead --strict --json</span>
+<span class="t-dim">$</span> <span class="t-cmd">bunx @fagnersales/convex-doctor \
+    --dead --strict --json</span>
 <span class="t-ok">✓ all green, no throws</span></pre>
         </div>
       </div>
