@@ -1,4 +1,4 @@
-<img src="site/assets/logos/logomark.svg" alt="convex-doctor" width="40" height="40">
+<img src="site/assets/banner.png" alt="convex-doctor — Convex is the best backend for your agent. convex-doctor keeps it that way.">
 
 # convex-doctor
 
