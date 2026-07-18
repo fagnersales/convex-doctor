@@ -358,3 +358,12 @@ footer .spacer { flex: 1; }
   .rule-grid { grid-template-columns: 1fr; }
   .stats .row { grid-template-columns: 1fr 1fr; }
 }
+
+/* Copy-to-agent */
+.copy-btn {
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.05em; text-transform: uppercase;
+  background: var(--accent-cta); color: var(--surface-cream);
+  border: none; border-radius: var(--radius-pill); padding: 6px 14px; margin-left: 14px; cursor: pointer;
+}
+.copy-btn:hover { filter: brightness(1.08); }
+.copy-btn.done, .btn.done { background: #72c043; color: var(--color-n12); }

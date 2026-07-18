@@ -23,6 +23,7 @@
         <a href="#lints">Lints</a>
         <a href="#dead">Dead code</a>
         <a href="#agentic">Agentic loop</a>
+        <a href="https://github.com/fagnersales/convex-doctor">GitHub ↗</a>
         <a class="btn light" style="padding: 8px 18px; font-size: 13px;" href="https://www.npmjs.com/package/@fagnersales/convex-doctor">npm ↗</a>
       </div>
     </nav>
@@ -37,8 +38,8 @@
           <strong>fix recipe your agent can apply</strong>.
         </p>
         <div class="cta-row">
-          <a class="btn primary lg" href="#quickstart">Run it on your repo</a>
-          <a class="btn outline lg" href="#lints">See the rules</a>
+          <button class="btn primary lg" onclick="copyAgentPrompt(this)">Run with your agent ⧉</button>
+          <a class="btn outline lg" href="#quickstart">Run it yourself</a>
         </div>
         <div style="margin-top: 26px;">
           <span class="code-chip"><span class="prompt">$</span> bunx @fagnersales/convex-doctor</span>
@@ -226,9 +227,17 @@
         </div>
       </div>
 
-      <p style="margin: 28px 0 0; font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-on-dark-muted);">
-        + wrong_runtime_import · node_builtin_without_use_node · misplaced_use_node · sequential_ctx_run · cron_public_fn · old_function_syntax · schema_validation_disabled · …
-      </p>
+      <div class="codes" style="margin-top: 28px; align-items: center;">
+        <span style="font-family: var(--font-mono); font-size: 12px; color: var(--text-on-dark-muted);">+</span>
+        <span class="mono-label on-dark">Wrong_runtime_import</span>
+        <span class="mono-label on-dark">Node_builtin_without_use_node</span>
+        <span class="mono-label on-dark">Misplaced_use_node</span>
+        <span class="mono-label on-dark">Sequential_ctx_run</span>
+        <span class="mono-label on-dark">Cron_public_fn</span>
+        <span class="mono-label on-dark">Old_function_syntax</span>
+        <span class="mono-label on-dark">Schema_validation_disabled</span>
+        <span style="font-family: var(--font-mono); font-size: 12px; color: var(--text-on-dark-muted);">…</span>
+      </div>
     </div>
   </section>
 </div>
@@ -290,6 +299,22 @@
         <strong style="color: var(--surface-cream);">one rule code at a time</strong>:
         lock a group, fix every site, re-scan, commit. The loop converges to zero.
       </p>
+
+      <div class="terminal prompt-card" style="margin-top: 36px; border-color: rgba(20,20,20,.35);">
+        <div class="bar">
+          <span class="dot" style="background: var(--color-red)"></span>
+          <span class="dot" style="background: var(--color-yellow)"></span>
+          <span class="dot" style="background: var(--color-plum)"></span>
+          <span class="title">agent-prompt.txt · paste into your agent of choice</span>
+          <button class="copy-btn" onclick="copyAgentPrompt(this)">Copy ⧉</button>
+        </div>
+        <pre id="agent-prompt"><span class="t-dim">Run:</span> <span class="t-cmd">bunx @fagnersales/convex-doctor groups --json</span>
+Fix one rule code at a time:
+<span class="t-dim">1.</span> lock a group: <span class="t-cmd">bunx @fagnersales/convex-doctor --only &lt;CODE&gt; --json</span>
+<span class="t-dim">2.</span> fix every site with the group's shared recipe
+<span class="t-dim">3.</span> re-scan until the group reads zero, then commit
+Repeat until the scan is clean.</pre>
+      </div>
 
       <div class="steps">
         <div class="step-card">
@@ -417,5 +442,19 @@
   </div>
 </footer>
 
+<script>
+function copyAgentPrompt(btn) {
+  const text = document.getElementById('agent-prompt').innerText;
+  navigator.clipboard.writeText(text).then(() => {
+    if (!btn.dataset.label) btn.dataset.label = btn.textContent;
+    btn.textContent = 'Copied — paste into your agent';
+    btn.classList.add('done');
+    setTimeout(() => {
+      btn.textContent = btn.dataset.label;
+      btn.classList.remove('done');
+    }, 2200);
+  });
+}
+</script>
 </body>
 </html>
