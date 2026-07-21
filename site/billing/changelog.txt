@@ -1,0 +1,44 @@
+# convex-watchdog spec changelog (patch notes for agents)
+#
+# Newest first. Audience: an agent MAINTAINING AN EXISTING INSTALL — each entry says
+# exactly what to change, not just what's new. Compare the install's recorded
+# SPEC_VERSION against the top entry; apply every newer entry's migration steps in
+# order (oldest unapplied first), re-render, screenshot-verify, then bump SPEC_VERSION.
+# Entry header format is machine-checkable: "v<N> — YYYY-MM-DD".
+#
+# Spec:     https://convex-doctor.fagner.ink/billing/llms.txt
+# Template: https://convex-doctor.fagner.ink/billing/dashboard.html
+
+v3 — 2026-07-21
+  New: interventions log — deployed fixes are recorded in data/interventions.jsonl
+       and judged against the billing data (two-stage: same-day early signal from the
+       intraday row, verdict from full-day deltas after >=2 full post-deploy days,
+       deploy day excluded). Spec "What to build" item 3.
+  New: template section 05 "Interventions" + deploy markers on the trajectory chart;
+       the page now renders DATA.interventions (an empty array is valid).
+  New: spec versioning + this changelog. --sync-template must now also fetch this
+       file, diff against the recorded SPEC_VERSION, and apply migration notes.
+  Docs: daily granularity confirmed as the hard floor (from/to reject timestamps;
+       no hourly query exists) — added to Gotchas; verdicts must use full days only.
+  Migration for existing installs:
+    1. Re-download the template (--sync-template) and re-render; confirm the new
+       Interventions section appears and the page grep now requires DATA.interventions.
+    2. Emit DATA.interventions from the collector (empty array until the log has entries).
+    3. Create data/interventions.jsonl (empty, append-only) and document its absolute
+       path + entry schema in AGENTS.md, so agents in other repos can append to it.
+    4. Implement the intervention evaluator in the collect step (spec item 3): flip
+       status watching -> effective|no_effect|worse and write back measured deltas.
+    5. Add AGENTS.md operations: "log an intervention", "did my fix work?",
+       "update my watchdog" (-> --sync-template).
+    6. Record SPEC_VERSION = 3.
+
+v2 — 2026-07-21
+  Baseline for early installs. Added over v1: incremental + idempotent on-disk storage
+  pattern, rate-limit and _rest gotchas, functionBreakdown noise filtering,
+  --sync-template, required scheduling with honest poll.next, --status, alert fold-in,
+  AGENTS.md requirement, marker-only DATA injection rule, definition of done.
+  Migration: an install built before v2 predates the storage pattern — rebuild from spec.
+
+v1 — 2026-07-21
+  Initial public spec: auth, discovery endpoints, usage query IDs + column orders,
+  units, pricing table, detection rules, forkable dashboard template.

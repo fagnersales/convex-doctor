@@ -15,6 +15,17 @@ the query IDs and column orders come from Convex's open-source dashboard
 (github.com/get-convex/convex-backend, npm-packages/dashboard/src/hooks/usageMetrics.ts).
 If a call starts failing, re-derive from that file.
 
+## Spec version & updates
+
+This is **spec v3** (2026-07-21). Patch notes: https://convex-doctor.fagner.ink/billing/changelog.txt
+— each entry carries migration notes written for an agent maintaining an EXISTING install.
+
+- Record the version you built against (e.g. `SPEC_VERSION = 3` near the top of the
+  collector, and note it in `AGENTS.md`).
+- `--sync-template` must ALSO fetch the changelog, compare against the recorded version,
+  and apply any newer entries' migration notes before bumping the recorded version.
+- `AGENTS.md` must map "update my watchdog" to that flag, so the user updates by asking.
+
 ## Safety rules — read first, non-negotiable
 
 1. The access token in `~/.convex/config.json` is a **full-account credential**.
@@ -135,6 +146,11 @@ deploymentCountByType `34801c2e-06a8-4cc5-8ecc-dd412b908763`
   paths hit by internet scanners (`/.env.bak`, `/.well-known/...`) and system jobs
   (`_system_job/cloud_backup`). Threshold/ignore these before "new function" detection, or
   a scanner probe will fire a first-seen anomaly.
+- **Daily is the finest billing granularity — verified, don't fight it.** `from`/`to`
+  reject timestamps (`InvalidDateFormat: Date format must be YYYY-MM-DD`) and the
+  dashboard's full query registry contains no hourly variant of anything. Day-level
+  deltas are the truth source for billed units; today's row updating intraday is the
+  only sub-day signal. Design any before/after comparison around full days.
 - **Browser automation blocks `file://`.** To screenshot-verify the dashboard, serve it
   over localhost (`python3 -m http.server`) rather than opening the file path directly.
 
@@ -171,6 +187,7 @@ smaller included tiers and hard limits instead of overages).
      - `data/functions_daily.json` — `{"YYYY-MM-DD": {"pid::file.js:fn": {calls, io}}}` (per-function daily)
      - `data/summary_mtd.json` — the raw summary-query rows (authoritative billed totals)
      - `data/last_run.json` — timestamp of the last successful run (for incremental fetch + `--status`)
+     - `data/interventions.jsonl` — append-only fix log (see item 3; create it empty on setup)
    - **Incremental & idempotent.** First run backfills the window (90d project-series,
      45d function-series). Later runs fetch only the dates missing since `last_run` **plus a
      2-day overlap** (today's row updates intraday and late data trickles in), then merge —
@@ -188,7 +205,30 @@ smaller included tiers and hard limits instead of overages).
    - **Tier trajectory**: (MTD ÷ day-of-month × days-in-month) crosses an included tier
      → report the crossing date and projected overage dollars.
    - **Intraday spike**: today-so-far vs the same fraction of a typical day.
-3. **Dashboard** — do NOT design your own. Fork the reference dashboard:
+3. **Interventions log — close the loop between fixes and the bill.** A watchdog that
+   only observes is half the product. When someone deploys a fix in response to a finding,
+   that fix gets *recorded* and then *judged* against the data. This is also how agents
+   talk to each other here: the fixing agent (working in the app's own repo) writes
+   intent; the collector writes measured outcome; every later session reads both and
+   never re-litigates what was already tried.
+   - `data/interventions.jsonl`, append-only, one JSON object per line:
+     `{id, ts: ISO-8601, project, functions: ["file.js:fn", …], metric, hypothesis,
+     expected, deploy_commit, status: "watching"}`. Document the absolute path + this
+     schema in `AGENTS.md` so agents in OTHER repos can be told "log this in my watchdog".
+   - **Two-stage evaluation**, run by the collector on every poll:
+     - *early_signal* (same day): today's intraday row updates ~hourly — compare the
+       touched project/functions' today-so-far against the same fraction of a typical
+       day. Directional only; never a verdict.
+     - *verdict* (1–2 days): billing truth. Baseline = the 7 full days before the deploy
+       day; observation = full days after. **Exclude the deploy day** (mixed traffic) and
+       today's partial row. Once ≥2 full post-deploy days exist, write back
+       `{verdict: "effective"|"no_effect"|"worse", baseline_daily, after_daily, delta_pct,
+       judged_at}` and flip `status`. Data is daily (see Gotchas) — never claim a verdict
+       from partial-day data, and prefer weekday-aware comparison (7-day windows do this
+       for free) so a Friday deploy doesn't get credit for the weekend dip.
+   - Dashboard: the template renders `DATA.interventions` as its own section and draws
+     deploy markers on the trajectory chart — feed it, even if the array is empty.
+4. **Dashboard** — do NOT design your own. Fork the reference dashboard:
    download `https://convex-doctor.fagner.ink/billing/dashboard.html` (public, no token)
    and use it as-is. The whole page renders from one DATA block delimited by the
    `══ DATA ══` / `══ END DATA ══` marker lines — your collector regenerates ONLY the
@@ -197,8 +237,9 @@ smaller included tiers and hard limits instead of overages).
    data, so any team's numbers render correctly. The block ships with sample data
    documenting every field's shape and units. It contains, in order: hero (MTD +
    projected overage, billing day), included-tier meters, per-project attribution,
-   anomaly feed, cumulative DB IO + daily egress charts, function explorer. Dollars
-   everywhere — engineers ignore gigabytes but act on dollars.
+   anomaly feed, cumulative DB IO + daily egress charts (with intervention deploy
+   markers), interventions log, function explorer. Dollars everywhere — engineers
+   ignore gigabytes but act on dollars.
    - **Inject between the markers only** — do NOT regex on `const DATA` (that literal also
      appears in the template's header comment; a `.*` match will delete half the document).
      Splice the two marker lines. After injecting, assert the page still contains `<head>`,
@@ -207,8 +248,10 @@ smaller included tiers and hard limits instead of overages).
    - **`--sync-template`** — the template improves upstream. Provide a flag that
      re-downloads it, verifies the markers exist before overwriting, re-renders from the
      stored data, then greps the new render code for `DATA.<field>` references and confirms
-     your collector emits them all. Without this, every deployed watchdog is frozen at build day.
-4. **Scheduling (required — not a footnote).** An unscheduled watchdog is not a watchdog.
+     your collector emits them all. It also checks the changelog (see Spec version &
+     updates) and applies migration notes. Without this, every deployed watchdog is
+     frozen at build day.
+5. **Scheduling (required — not a footnote).** An unscheduled watchdog is not a watchdog.
    Ask the user for cadence (**recommend every 2–3h** / hourly / daily / manual, with the
    trade-off: faster = same-day spike detection, slower = fewer API calls) and install the
    platform scheduler (launchd on macOS, systemd timer or cron on Linux); keep a copy of the
@@ -216,13 +259,14 @@ smaller included tiers and hard limits instead of overages).
    user has explicitly declined one.** Never render a fake next-run time: `poll.next` must be
    derived from the actually-installed schedule, or read `"not scheduled — manual"`. Provide
    a `--status` command printing last run, schedule state, and next run.
-5. **Alerts** — a dashboard the user must remember to open is a weak alarm. Fold the
+6. **Alerts** — a dashboard the user must remember to open is a weak alarm. Fold the
    destination into the scheduling question ("where should spike alerts go?") and, if given a
    webhook URL, POST a summary on any detection (Discord/Slack). Skip silently if declined.
-6. **Operate-by-agent note (required).** Assume the user will never run a script by hand —
+7. **Operate-by-agent note (required).** Assume the user will never run a script by hand —
    the deliverables are the schedule and the dashboard, not CLI instructions. Write an
    `AGENTS.md` in the project mapping every operation to both a command and a plain-English
-   request ("refresh my usage", "how's my Convex bill?", "sync the watchdog template",
+   request ("refresh my usage", "how's my Convex bill?", "update my watchdog",
+   "log an intervention: <what I deployed and why>", "did my fix work?",
    "change the schedule", "open the dashboard"), so any future agent session can operate it
    for them. End your final report with the dashboard's absolute path and open it
    (`open`/`xdg-open`) as the last action; tell the user to bookmark it — the scheduler keeps
@@ -230,10 +274,11 @@ smaller included tiers and hard limits instead of overages).
 
 Build order: print the summary table first (prove auth works) → confirm a couple of column
 orders with tiny probes → collector + storage → fork + inject the dashboard, screenshot-verify
-→ detection rules → scheduling + alerts → `AGENTS.md` + open the page.
+→ detection rules + intervention evaluator → scheduling + alerts → `AGENTS.md` + open the page.
 
-**Definition of done** (all five, or the watchdog only half-works):
+**Definition of done** (all six, or the watchdog only half-works):
 (1) a schedule is installed or explicitly declined; (2) `--status` reports honestly (no fake
 next-run); (3) an incremental re-run is verified to fetch only recent days, not the whole
 window; (4) the dashboard is open in the user's browser; (5) `AGENTS.md` exists so a future
-agent can operate it.
+agent can operate it; (6) `data/interventions.jsonl` exists (even empty), its path + schema
+are in `AGENTS.md`, and `SPEC_VERSION` is recorded for the update check.
