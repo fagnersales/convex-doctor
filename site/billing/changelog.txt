@@ -8,6 +8,23 @@
 #
 # Spec:     https://convex-doctor.fagner.ink/billing/llms.txt
 # Template: https://convex-doctor.fagner.ink/billing/dashboard.html
+# Skill:    https://convex-doctor.fagner.ink/billing/skill.md
+
+v4 — 2026-07-21
+  New: optional global debugging skill /convex-watchdog-it — cost-aware Convex
+       debugging that joins the watchdog's billing data with source code in any
+       repo. Forkable reference at /billing/skill.md. User-invoked only
+       (disable-model-invocation: true); advise + offer, never edits unprompted.
+  New: discovery file ~/.convex-watchdog/location.json so agents in other repos
+       can find the install without hardcoded paths.
+  Migration for existing installs:
+    1. Write ~/.convex-watchdog/location.json:
+       {"path": "<abs path to this watchdog dir>", "team": "<team name>"}
+    2. Ask the user: install the /convex-watchdog-it skill globally? If yes,
+       download skill.md to ~/.claude/skills/convex-watchdog-it/SKILL.md
+       (keep its frontmatter intact, especially disable-model-invocation).
+    3. Add AGENTS.md op: "update the debugging skill" -> re-download skill.md.
+    4. Record SPEC_VERSION = 4.
 
 v3 — 2026-07-21
   New: interventions log — deployed fixes are recorded in data/interventions.jsonl

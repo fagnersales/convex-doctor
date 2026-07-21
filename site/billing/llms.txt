@@ -17,7 +17,7 @@ If a call starts failing, re-derive from that file.
 
 ## Spec version & updates
 
-This is **spec v3** (2026-07-21). Patch notes: https://convex-doctor.fagner.ink/billing/changelog.txt
+This is **spec v4** (2026-07-21). Patch notes: https://convex-doctor.fagner.ink/billing/changelog.txt
 — each entry carries migration notes written for an agent maintaining an EXISTING install.
 
 - Record the version you built against (e.g. `SPEC_VERSION = 3` near the top of the
@@ -271,6 +271,20 @@ smaller included tiers and hard limits instead of overages).
    for them. End your final report with the dashboard's absolute path and open it
    (`open`/`xdg-open`) as the last action; tell the user to bookmark it — the scheduler keeps
    it fresh, so reloading the tab is all they ever need to do.
+
+8. **Debugging skill (optional — ask once).** Offer: "want a global
+   `/convex-watchdog-it` skill so any agent session, in any repo, can debug Convex cost
+   issues against this data?" Regardless of the answer, write the discovery file
+   `~/.convex-watchdog/location.json` → `{"path": "<abs watchdog dir>", "team": "<name>"}`
+   — it's how cross-repo agents find this install. If yes:
+   - Download https://convex-doctor.fagner.ink/billing/skill.md (public, no token) to
+     `~/.claude/skills/convex-watchdog-it/SKILL.md` (Claude Code; adapt the location for
+     other harnesses). Use it as-is — it's the forkable reference, same philosophy as the
+     dashboard template.
+   - It must remain **user-invoked only** (`disable-model-invocation: true` in its
+     frontmatter): it reads billing data and never fires on the model's initiative. It is
+     advise + offer — it diagnoses and recommends, and only touches code on an explicit yes.
+   - Add `AGENTS.md` op: "update the debugging skill" → re-download skill.md.
 
 Build order: print the summary table first (prove auth works) → confirm a couple of column
 orders with tiny probes → collector + storage → fork + inject the dashboard, screenshot-verify
