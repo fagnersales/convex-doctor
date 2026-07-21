@@ -8,3 +8,6 @@ dist
 testbeds/
 reports/
 .vercel
+
+# Playwright MCP scratch (browser automation artifacts)
+.playwright-mcp/
