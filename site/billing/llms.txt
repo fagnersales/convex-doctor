@@ -125,6 +125,18 @@ deploymentCountByType `34801c2e-06a8-4cc5-8ecc-dd412b908763`
   day it starts — this is the whole point of the watchdog.
 - Dev deployments (`s16`) are usually ≈ 0; don't let them clutter attribution.
 - A team can have many projects; two or three usually dominate. Attribute before alarming.
+- **Rate limits are real.** `usage/query` returns 429 "Too Many Requests" under load.
+  Fetch the per-day function series with concurrency ≤ 2 (serial is fine) and retry 429s
+  with exponential backoff. A 90-day backfill is ~46 calls — pace it, don't fan out.
+- **`_rest` pseudo-project.** Per-project daily rows include a `projectId` of `_rest` —
+  Convex's rollup of many small projects. Label it "(other / rolled-up projects)"; do NOT
+  look it up in the projects map (it isn't there).
+- **functionBreakdown is noisy.** ~hundreds of rows/day. Function names include raw HTTP
+  paths hit by internet scanners (`/.env.bak`, `/.well-known/...`) and system jobs
+  (`_system_job/cloud_backup`). Threshold/ignore these before "new function" detection, or
+  a scanner probe will fire a first-seen anomaly.
+- **Browser automation blocks `file://`.** To screenshot-verify the dashboard, serve it
+  over localhost (`python3 -m http.server`) rather than opening the file path directly.
 
 ## Pricing (Convex Pro, as of mid-2026 — verify at convex.dev/pricing)
 
@@ -146,10 +158,27 @@ smaller included tiers and hard limits instead of overages).
 
 ## What to build
 
-1. **Collector** — a script that: reads the token, discovers team + projects, pulls the
-   queries above (90-day backfill on first run, then month-to-date refresh), and stores
-   daily + per-function snapshots locally (SQLite or JSON files — your call). Make it
-   idempotent so a cron/launchd/scheduled run every 2–3 hours is safe.
+1. **Collector** — a script that reads the token, discovers team + projects, pulls the
+   queries above, and stores snapshots locally. Follow this **storage pattern** — it is
+   proven against a real team and prevents the two mistakes agents make here:
+   re-fetching the whole window every run (hammers the API, hits 429), and keeping
+   history only inside the rendered page (so nothing survives a re-render).
+
+   - **History lives on disk, not in the HTML.** Keep dated snapshots the dashboard
+     renders *from*. A JSON layout that works (SQLite is equally fine):
+     - `data/daily.json` — `{ projects: {pid: name}, days: {"YYYY-MM-DD": {io_bytes:{pid:…},
+       calls:{pid:…}, eg:{pid:[serving,backup,logStream,fetch]}}} }` (per-project daily series)
+     - `data/functions_daily.json` — `{"YYYY-MM-DD": {"pid::file.js:fn": {calls, io}}}` (per-function daily)
+     - `data/summary_mtd.json` — the raw summary-query rows (authoritative billed totals)
+     - `data/last_run.json` — timestamp of the last successful run (for incremental fetch + `--status`)
+   - **Incremental & idempotent.** First run backfills the window (90d project-series,
+     45d function-series). Later runs fetch only the dates missing since `last_run` **plus a
+     2-day overlap** (today's row updates intraday and late data trickles in), then merge —
+     re-fetching a day overwrites that day, never the history. This turns a ~46-call, ~60s
+     backfill into a ~3-call, ~15s refresh, so a cron every 2–3h is cheap and safe.
+     Offer `--full` to force a full rebuild.
+   - **Gitignore the data.** `data/`, the rendered `dashboard.html`, and any screenshots
+     contain real billing numbers — add them to `.gitignore` before the first commit.
 2. **Detection rules** — run after each collection, against a 14-day rolling baseline:
    - **New function shipped**: a function name never seen before is suddenly a top
      consumer. (This is the #1 real-world bill spike: new code, unindexed query.)
@@ -160,20 +189,51 @@ smaller included tiers and hard limits instead of overages).
      → report the crossing date and projected overage dollars.
    - **Intraday spike**: today-so-far vs the same fraction of a typical day.
 3. **Dashboard** — do NOT design your own. Fork the reference dashboard:
-   download `https://convex-doctor.fagner.ink/billing/dashboard.html` and use it as-is.
-   The whole page renders from one `const DATA = {…}` block between the
-   `══ DATA ══` / `══ END DATA ══` markers — your collector regenerates ONLY that
-   block (rewrite the file, or serve the JSON and inject it); leave the markup,
-   styles, and chart code untouched. Chart scales, month labels, tier lines and
-   crossing markers are computed from DATA, so any team's numbers render correctly.
-   The block ships with sample data documenting every field's shape and units.
-   It contains, in order: hero (MTD + projected overage, billing day), included-tier
-   meters, per-project attribution, anomaly feed, cumulative DB IO + daily egress
-   charts, function explorer. Dollars everywhere — engineers ignore gigabytes but
-   act on dollars.
-4. **Alerts (optional)** — on any detection, POST to a user-supplied webhook
-   (Discord/Slack). Ask the user for the URL; skip silently if not configured.
+   download `https://convex-doctor.fagner.ink/billing/dashboard.html` (public, no token)
+   and use it as-is. The whole page renders from one DATA block delimited by the
+   `══ DATA ══` / `══ END DATA ══` marker lines — your collector regenerates ONLY the
+   text between those markers; leave the markup, styles, and chart code untouched.
+   Chart scales, month labels, tier lines and crossing markers are computed from the
+   data, so any team's numbers render correctly. The block ships with sample data
+   documenting every field's shape and units. It contains, in order: hero (MTD +
+   projected overage, billing day), included-tier meters, per-project attribution,
+   anomaly feed, cumulative DB IO + daily egress charts, function explorer. Dollars
+   everywhere — engineers ignore gigabytes but act on dollars.
+   - **Inject between the markers only** — do NOT regex on `const DATA` (that literal also
+     appears in the template's header comment; a `.*` match will delete half the document).
+     Splice the two marker lines. After injecting, assert the page still contains `<head>`,
+     `<style>`, `<body>`, `</script>` and is not smaller than the template — then
+     screenshot-verify it actually rendered (serve over localhost, not `file://`).
+   - **`--sync-template`** — the template improves upstream. Provide a flag that
+     re-downloads it, verifies the markers exist before overwriting, re-renders from the
+     stored data, then greps the new render code for `DATA.<field>` references and confirms
+     your collector emits them all. Without this, every deployed watchdog is frozen at build day.
+4. **Scheduling (required — not a footnote).** An unscheduled watchdog is not a watchdog.
+   Ask the user for cadence (**recommend every 2–3h** / hourly / daily / manual, with the
+   trade-off: faster = same-day spike detection, slower = fewer API calls) and install the
+   platform scheduler (launchd on macOS, systemd timer or cron on Linux); keep a copy of the
+   unit/plist in the project. Building is not done until a schedule is installed **or the
+   user has explicitly declined one.** Never render a fake next-run time: `poll.next` must be
+   derived from the actually-installed schedule, or read `"not scheduled — manual"`. Provide
+   a `--status` command printing last run, schedule state, and next run.
+5. **Alerts** — a dashboard the user must remember to open is a weak alarm. Fold the
+   destination into the scheduling question ("where should spike alerts go?") and, if given a
+   webhook URL, POST a summary on any detection (Discord/Slack). Skip silently if declined.
+6. **Operate-by-agent note (required).** Assume the user will never run a script by hand —
+   the deliverables are the schedule and the dashboard, not CLI instructions. Write an
+   `AGENTS.md` in the project mapping every operation to both a command and a plain-English
+   request ("refresh my usage", "how's my Convex bill?", "sync the watchdog template",
+   "change the schedule", "open the dashboard"), so any future agent session can operate it
+   for them. End your final report with the dashboard's absolute path and open it
+   (`open`/`xdg-open`) as the last action; tell the user to bookmark it — the scheduler keeps
+   it fresh, so reloading the tab is all they ever need to do.
 
-Suggested order: fetch + print the summary table first (prove auth works), then the
-collector + storage, then fork the dashboard template and wire it to real data,
-then rules, then scheduling + alerts.
+Build order: print the summary table first (prove auth works) → confirm a couple of column
+orders with tiny probes → collector + storage → fork + inject the dashboard, screenshot-verify
+→ detection rules → scheduling + alerts → `AGENTS.md` + open the page.
+
+**Definition of done** (all five, or the watchdog only half-works):
+(1) a schedule is installed or explicitly declined; (2) `--status` reports honestly (no fake
+next-run); (3) an incremental re-run is verified to fetch only recent days, not the whole
+window; (4) the dashboard is open in the user's browser; (5) `AGENTS.md` exists so a future
+agent can operate it.

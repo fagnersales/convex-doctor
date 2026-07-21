@@ -2,11 +2,14 @@
 <!--
   convex-watchdog dashboard TEMPLATE — fork me, don't redesign me.
 
-  Everything on this page renders from the single `const DATA = {…}` block at the
-  top of the <script> (marked ══ DATA ══). To make this page live for any team:
-  regenerate ONLY that block from collected usage snapshots and leave the rest —
-  markup, styles, chart code — untouched. Chart scales, gridlines, month labels,
-  tier lines and crossings are all computed from DATA.
+  Everything on this page renders from the single DATA block near the top of the
+  <script>, delimited by the two marker lines that read (each on its own line)
+  DATA and END DATA inside a box-drawing rule. To make this page live for any team,
+  regenerate ONLY the text between those two marker lines from collected usage
+  snapshots and leave the rest — markup, styles, chart code — untouched. Inject by
+  splicing between the markers; do NOT pattern-match the variable name, and this
+  comment holds no code for that reason. Scales, gridlines, month labels, tier lines
+  and crossings are all computed from the data.
 
   Spec: https://convex-doctor.fagner.ink/billing/llms.txt
   The values shipped here are fictional sample data with realistic shapes.
@@ -405,7 +408,7 @@ const $ = (s) => document.querySelector(s);
 const DATA = {
   team: { name: "acme", plan: "Pro", projectCount: 12 },
   period: { month: "Jul", year: 2026, daysInMonth: 31, dayOfMonth: 21, billedDays: 20.6 },
-  poll: { last: "today 14:32", next: "1h 41m" },
+  poll: { last: "today 14:32", next: "not scheduled — manual" },
 
   hero: {
     overageMtd: 50.48,
