@@ -122,14 +122,13 @@ header.mast { position: sticky; top: 0; z-index: 40; }
 }
 .pills { display: flex; gap: 8px; margin-left: 10px; }
 .pill {
+  display: inline-block;
   font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.05em; text-transform: uppercase;
   border: 1px solid var(--border-dark); border-radius: var(--radius-pill);
   padding: 6px 14px 5px; color: var(--text-on-dark-muted);
-  background: none; cursor: pointer; line-height: 1.2;
+  background: none; line-height: 1.2;
 }
 .pill[aria-pressed="true"] { background: var(--color-yellow); border-color: var(--color-yellow); color: var(--color-n12); }
-.pill:disabled { opacity: 0.4; cursor: not-allowed; }
-.pill:focus-visible { outline: 2px solid var(--color-yellow); outline-offset: 2px; }
 .poll {
   margin-left: auto; text-align: right;
   font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.05em;
@@ -521,9 +520,7 @@ function niceCeil(v) {
 
 /* ── masthead ─────────────────────────────────────────────── */
 $("#pills").innerHTML =
-  `<button class="pill" aria-pressed="true">Team · ${DATA.team.projectCount} projects</button>` +
-  DATA.projects.filter(p => !p.rest).slice(0, 2).map(p =>
-    `<button class="pill" disabled title="Drill-down — not wired yet">${p.name}</button>`).join("");
+  `<span class="pill" aria-pressed="true">Team · ${DATA.team.projectCount} projects</span>`;
 $("#poll").innerHTML =
   `<div>Last poll <b>${DATA.poll.last}</b> · next in <b>${DATA.poll.next}</b></div>
    <div class="line2">Team <b>${DATA.team.name}</b> · ${DATA.team.plan} plan · billing ${P.month} 1–${P.daysInMonth}</div>`;
