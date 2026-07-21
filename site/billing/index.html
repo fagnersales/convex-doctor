@@ -27,30 +27,12 @@
         <span class="name">convex<span>-watchdog</span></span>
       </a>
       <div class="links">
-        <a href="dashboard.html">Demo</a>
         <a class="btn light sm" href="https://github.com/fagnersales/convex-doctor" aria-label="GitHub">
           <svg class="btn-ico" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg><span class="btn-label">GitHub ↗</span>
         </a>
       </div>
-      <button class="nav-burger" aria-label="Menu" aria-expanded="false">
-        <svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true"><path stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M3 5.5h14M3 10h14M3 14.5h14"/></svg>
-      </button>
     </nav>
 
-    <div class="nav-scrim"></div>
-    <aside class="nav-drawer" aria-hidden="true">
-      <div class="drawer-head">
-        <button class="drawer-close" aria-label="Close menu">✕</button>
-      </div>
-      <nav class="drawer-links">
-        <a href="dashboard.html">Demo</a>
-      </nav>
-      <div class="drawer-cta">
-        <a class="btn outline sm" href="https://github.com/fagnersales/convex-doctor">
-          <svg class="btn-ico" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>GitHub ↗
-        </a>
-      </div>
-    </aside>
 
     <div class="hero-grid" style="grid-template-columns: 1fr;">
       <div class="hero-copy">
@@ -63,7 +45,7 @@
         </p>
         <div class="cta-row">
           <button class="btn primary lg" onclick="copyAgentPrompt(this)">Copy the prompt ⧉</button>
-          <a class="btn outline lg" href="dashboard.html">See the dashboard →</a>
+          <a class="btn outline lg" href="#dashboard">See the dashboard →</a>
         </div>
       </div>
     </div>
@@ -75,12 +57,22 @@
   </div>
 </div>
 
+<!-- ═══════════════ THE DASHBOARD ═══════════════ -->
+<section id="dashboard">
+  <div class="wrap">
+    <h2 class="sec">This is what<br>it builds you.</h2>
+    <p class="lede" style="margin-top: 18px;">
+      Tier meters, per-project attribution, anomaly feed, projected overage in
+      dollars — on your real usage, on your machine. Sample data shown.
+    </p>
+    <img src="assets/dashboard-preview.png" alt="The watchdog dashboard: included-tier meters, per-project attribution, anomaly feed, trajectory charts, and a function explorer — populated with sample data"
+         style="display: block; width: 100%; height: auto; margin-top: 34px; border-radius: 14px; border: 1px solid rgba(26,26,26,.12); box-shadow: 0 24px 60px rgba(26,26,26,.18);">
+  </div>
+</section>
+
 <!-- ═══════════════ THE PROMPT ═══════════════ -->
 <section id="prompt">
   <div class="wrap">
-    <div class="eyebrow-row">
-      <span class="mono-label">The prompt</span>
-    </div>
     <h2 class="sec">One paste.<br>That's the install.</h2>
     <div class="feature-grid flip" style="margin-top: 34px; align-items: center;">
       <div class="terminal">
@@ -123,7 +115,6 @@ Rules:
   <div class="wrap">
     <div class="row">
       <span>convex-watchdog · part of <a href="../">convex-doctor</a></span>
-      <a href="dashboard.html">Demo</a>
       <a href="changelog.txt">Patch notes</a>
       <a href="skill.md">Skill</a>
       <a href="https://github.com/fagnersales/convex-doctor">GitHub</a>
@@ -144,27 +135,6 @@ Rules:
   update();
 })();
 
-// hamburger drawer (mobile nav)
-(function () {
-  var burger = document.querySelector('.nav-burger');
-  var drawer = document.querySelector('.nav-drawer');
-  var scrim = document.querySelector('.nav-scrim');
-  if (!burger || !drawer || !scrim) return;
-  function setOpen(open) {
-    drawer.classList.toggle('open', open);
-    scrim.classList.toggle('open', open);
-    burger.setAttribute('aria-expanded', String(open));
-    drawer.setAttribute('aria-hidden', String(!open));
-    document.documentElement.style.overflow = open ? 'hidden' : '';
-  }
-  burger.addEventListener('click', function () { setOpen(!drawer.classList.contains('open')); });
-  scrim.addEventListener('click', function () { setOpen(false); });
-  drawer.querySelector('.drawer-close').addEventListener('click', function () { setOpen(false); });
-  drawer.querySelectorAll('a[href^="#"]').forEach(function (a) {
-    a.addEventListener('click', function () { setOpen(false); });
-  });
-  addEventListener('keydown', function (e) { if (e.key === 'Escape') setOpen(false); });
-})();
 
 function copyAgentPrompt(btn) {
   const text = document.getElementById('agent-prompt').innerText;
