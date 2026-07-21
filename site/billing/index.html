@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>convex-watchdog — your Convex bill shouldn't be a surprise</title>
+<meta name="description" content="A billing watchdog your agent builds for you: one prompt, and it wires up a local dashboard on the real usage API Convex bills on — tier meters, per-function attribution, anomaly alerts. Runs on your machine; your token never leaves it.">
+<meta name="theme-color" content="#ffefd5">
+<meta property="og:type" content="website">
+<meta property="og:title" content="convex-watchdog">
+<meta property="og:description" content="Your Convex bill shouldn't be a surprise. One prompt — your agent builds the watchdog.">
+<meta property="og:url" content="https://convex-doctor.fagner.ink/billing">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="convex-watchdog">
+<meta name="twitter:description" content="Your Convex bill shouldn't be a surprise. One prompt — your agent builds the watchdog.">
+<link rel="icon" href="../assets/logos/pinwheel.png" type="image/png">
+<link rel="stylesheet" href="../styles.css?v=3">
+</head>
+<body>
+
+<!-- ═══════════════ HERO ═══════════════ -->
+<div class="hero">
+  <div class="wrap">
+    <nav class="top">
+      <a class="brand" href="../">
+        <img src="../assets/logos/pinwheel.png" alt="">
+        <span class="name">convex<span>-watchdog</span></span>
+      </a>
+      <div class="links">
+        <a href="dashboard.html">Demo</a>
+        <a class="btn outline sm" href="llms.txt">llms.txt ↗</a>
+        <a class="btn light sm" href="https://github.com/fagnersales/convex-doctor" aria-label="GitHub">
+          <svg class="btn-ico" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg><span class="btn-label">GitHub ↗</span>
+        </a>
+      </div>
+      <button class="nav-burger" aria-label="Menu" aria-expanded="false">
+        <svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true"><path stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M3 5.5h14M3 10h14M3 14.5h14"/></svg>
+      </button>
+    </nav>
+
+    <div class="nav-scrim"></div>
+    <aside class="nav-drawer" aria-hidden="true">
+      <div class="drawer-head">
+        <button class="drawer-close" aria-label="Close menu">✕</button>
+      </div>
+      <nav class="drawer-links">
+        <a href="dashboard.html">Demo</a>
+        <a href="llms.txt">llms.txt</a>
+      </nav>
+      <div class="drawer-cta">
+        <a class="btn outline sm" href="https://github.com/fagnersales/convex-doctor">
+          <svg class="btn-ico" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>GitHub ↗
+        </a>
+      </div>
+    </aside>
+
+    <div class="hero-grid" style="grid-template-columns: 1fr;">
+      <div class="hero-copy">
+        <span class="mono-label on-dark">Billing watchdog · Runs locally · Built by your agent</span>
+        <h1>Your Convex bill <span class="accent">shouldn't be a surprise.</span></h1>
+        <p class="sub">
+          You ship a new function on Tuesday. The bill tells you in <em>August</em>.
+          This page gives your agent everything it needs to build a <strong>local watchdog</strong>
+          on the <strong>exact numbers Convex bills on</strong> — tier meters, per-function
+          attribution, anomaly alerts, projected overage in dollars. Same-day, not end-of-month.
+        </p>
+        <div class="cta-row">
+          <button class="btn primary lg" onclick="copyAgentPrompt(this)">Copy the prompt ⧉</button>
+          <a class="btn outline lg" href="dashboard.html">See the dashboard →</a>
+          <a class="btn outline lg" href="llms.txt">Read the spec (llms.txt)</a>
+        </div>
+        <div style="margin-top: 26px;">
+          <span class="code-chip"><span class="prompt">claude&gt;</span> paste — the agent does the rest</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="stripes tilted">
+    <div class="s-yellow"></div>
+    <div class="s-red"></div>
+    <div class="s-plum"></div>
+  </div>
+</div>
+
+<!-- ═══════════════ 01 · WHY ═══════════════ -->
+<section id="why">
+  <div class="wrap">
+    <div class="eyebrow-row">
+      <span class="mono-label">01 · The problem</span>
+    </div>
+    <h2 class="sec">Logs lie.<br>The bill doesn't.</h2>
+    <div class="feature-grid" style="margin-top: 34px;">
+      <div>
+        <p class="lede">
+          Log streams drop events, can't see storage-API calls, and are blind to the egress
+          your own <strong>cloud backups</strong> generate. The only truthful source is the
+          usage API the Convex dashboard itself reads — <strong>exact billed numbers</strong>,
+          per day, per project, per function, updating hourly.
+        </p>
+        <p class="lede">
+          The watchdog polls it every few hours, keeps a local history, and tells you the day
+          something changes — <strong>which function</strong>, how many
+          <strong>bytes per call</strong>, and what it does to <strong>this month's bill</strong>.
+          Billing is <strong>per team</strong>, pooled across every project: one noisy side
+          project eats the same included tiers as production. The watchdog watches all of
+          them at once.
+        </p>
+      </div>
+      <div class="terminal">
+        <div class="bar">
+          <span class="dot" style="background: var(--color-red)"></span>
+          <span class="dot" style="background: var(--color-yellow)"></span>
+          <span class="dot" style="background: var(--color-plum)"></span>
+          <span class="title">anomaly feed</span>
+        </div>
+        <pre><span class="t-err">▲ NEW FUNCTION</span>  reports.js:rebuildDailyRollup
+  first seen today · <span class="t-warn">2,140 KB/call</span> · already #7 by DB bandwidth
+
+<span class="t-warn">▲ TIER CROSSED</span>  Database bandwidth
+  50 GB included · crossed day 6 · proj <span class="t-err">322 GB → $54.48</span>
+
+<span class="t-warn">▲ VOLUME SPIKE</span>  storefront
+  26.5 GB DB bandwidth today · <span class="t-warn">2.8× the 14-day median</span>
+
+<span class="t-ok">✓ detected same-day, not on the invoice</span></pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════ 02 · WHAT IT BUILDS (dark) ═══════════════ -->
+<div class="on-dark" style="background: var(--surface-black); color: var(--text-on-dark);">
+  <section id="builds">
+    <div class="wrap">
+      <div class="eyebrow-row">
+        <span class="mono-label on-dark">02 · What your agent builds</span>
+      </div>
+      <h2 class="sec">A collector, five detectors,<br>one dashboard.</h2>
+      <p class="lede">
+        The <a href="llms.txt" style="color: var(--color-yellow);">spec</a> hands your agent the
+        endpoints, query ids, column mappings, units, and pricing — it writes the collector in
+        <strong>your</strong> stack, in a directory you own. The dashboard it doesn't improvise:
+        it forks the <a href="dashboard.html" style="color: var(--color-yellow);">reference dashboard</a>
+        and regenerates only its data block — so every watchdog looks like this one,
+        not whatever the model felt like that day.
+      </p>
+
+      <div class="rule-grid">
+        <div class="rule-card">
+          <div class="top"><span class="code">Tier_meters</span><span class="mono-label solid">dash</span></div>
+          <div class="desc">Every included tier — function calls, DB bandwidth, egress, compute, storage — used, projected, and priced in dollars.</div>
+        </div>
+        <div class="rule-card">
+          <div class="top"><span class="code">Attribution</span><span class="mono-label solid">dash</span></div>
+          <div class="desc">Which project — then which function — is eating each tier. Share bars, bytes-per-call, top movers.</div>
+        </div>
+        <div class="rule-card">
+          <div class="top"><span class="code">New_function</span><span class="mono-label danger">alert</span></div>
+          <div class="desc">A function never seen before is suddenly a top consumer. The #1 real-world bill spike: new code, unindexed query.</div>
+        </div>
+        <div class="rule-card">
+          <div class="top"><span class="code">Cost_shape</span><span class="mono-label danger">alert</span></div>
+          <div class="desc">A known function's bytes-per-call jumps ≥3× its 14-day median — the query got heavier, not more popular.</div>
+        </div>
+        <div class="rule-card">
+          <div class="top"><span class="code">Tier_trajectory</span><span class="mono-label danger">alert</span></div>
+          <div class="desc">Month-to-date pace crosses an included tier: the crossing date and the projected overage, in dollars, before it happens.</div>
+        </div>
+        <div class="rule-card">
+          <div class="top"><span class="code">Intraday_spike</span><span class="mono-label danger">alert</span></div>
+          <div class="desc">Usage rows update hourly. Today-so-far vs a typical day catches a runaway loop the afternoon it ships — optionally straight to a Discord/Slack webhook.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<!-- ═══════════════ 03 · LOCAL BY DESIGN (maroon) ═══════════════ -->
+<div class="ci-band">
+  <section id="local" style="padding: 80px 0;">
+    <div class="wrap">
+      <div class="eyebrow-row">
+        <span class="mono-label on-dark" style="border-color: rgba(246,238,219,.3); color: rgba(246,238,219,.75);">03 · Local by design</span>
+      </div>
+      <h2 class="sec" style="color: var(--surface-cream);">Your token never<br>leaves your machine.</h2>
+      <p class="lede" style="color: rgba(246,238,219,.8);">
+        The watchdog reads the access token your <code style="font-family: var(--font-mono); font-size: 13px;">npx convex login</code>
+        already wrote to <code style="font-family: var(--font-mono); font-size: 13px;">~/.convex/config.json</code>,
+        and the spec is explicit: send it to <strong>api.convex.dev and nowhere else</strong>.
+        Read-only GET requests. Snapshots stay on disk. No server, no signup, no telemetry.
+      </p>
+      <div class="steps">
+        <div class="step-card">
+          <span class="n">1</span>
+          <h3>Copy the prompt</h3>
+          <p>Paste it into Claude Code (or any coding agent) in an empty directory.</p>
+        </div>
+        <div class="step-card">
+          <span class="n">2</span>
+          <h3>The agent builds it</h3>
+          <p>It fetches the spec, proves auth against your team, backfills ~90 days, and writes the collector + dashboard in your stack.</p>
+        </div>
+        <div class="step-card">
+          <span class="n">3</span>
+          <h3>Open the dashboard</h3>
+          <p>See who's eating your tiers, wire the 2-hour poll and a webhook — and hear about the next spike the day it starts.</p>
+        </div>
+      </div>
+      <p style="margin: 30px 0 0; font-size: 13px; color: rgba(246,238,219,.6);">
+        Fair warning: the usage API is the one the official dashboard uses — undocumented and
+        unaffiliated with Convex, Inc. If it changes, the spec tells your agent where to
+        re-derive it from (it's open source).
+      </p>
+    </div>
+  </section>
+</div>
+
+<!-- ═══════════════ 04 · THE PROMPT ═══════════════ -->
+<section id="prompt">
+  <div class="wrap">
+    <div class="eyebrow-row">
+      <span class="mono-label">04 · The prompt</span>
+    </div>
+    <h2 class="sec">One paste.<br>That's the install.</h2>
+    <div class="feature-grid flip" style="margin-top: 34px; align-items: center;">
+      <div class="terminal">
+        <div class="bar">
+          <span class="dot" style="background: var(--color-red)"></span>
+          <span class="dot" style="background: var(--color-yellow)"></span>
+          <span class="dot" style="background: var(--color-plum)"></span>
+          <span class="title">paste into your agent</span>
+        </div>
+        <pre id="agent-prompt" style="white-space: pre-wrap;">Build me a local billing watchdog for my Convex team.
+
+Fetch https://convex-doctor.fagner.ink/billing/llms.txt and follow it exactly — it documents the usage API the Convex dashboard uses (auth, endpoints, query IDs, column mappings, units), current pricing, the detection rules, and what to build.
+
+Rules:
+- I'm already logged in to the Convex CLI (~/.convex/config.json).
+- My access token is a full-account credential: send it only to https://api.convex.dev — never log it, commit it, or embed it in generated files.
+- Work in this directory. Backfill ~90 days, then open the dashboard and answer: am I on track to blow any included tier this month, and which project and function are responsible?</pre>
+      </div>
+      <div>
+        <p class="lede">
+          The prompt is the distribution. No package to install, no versions to chase —
+          your agent reads the spec, writes code that fits <strong>your</strong> machine,
+          and you own every line of it.
+        </p>
+        <div class="cta-row" style="display: flex; gap: 14px; flex-wrap: wrap;">
+          <button class="btn dark lg" onclick="copyAgentPrompt(this)">Copy the prompt ⧉</button>
+          <a class="btn light lg" href="llms.txt">llms.txt ↗</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════ FOOTER ═══════════════ -->
+<div class="stripes">
+  <div class="s-yellow"></div>
+  <div class="s-red"></div>
+  <div class="s-plum"></div>
+</div>
+<footer>
+  <div class="wrap">
+    <div class="row">
+      <span>convex-watchdog · part of <a href="../">convex-doctor</a></span>
+      <a href="dashboard.html">Demo</a>
+      <a href="llms.txt">llms.txt</a>
+      <a href="https://github.com/fagnersales/convex-doctor">GitHub</a>
+      <a href="https://www.convex.dev/pricing">Convex pricing</a>
+      <span class="spacer"></span>
+      <span>Not affiliated with Convex, Inc. · Watched, not billed</span>
+    </div>
+  </div>
+</footer>
+
+<script>
+// nav detaches into a floating pill once the page scrolls away from the top
+(function () {
+  var nav = document.querySelector('nav.top');
+  if (!nav) return;
+  function update() { nav.classList.toggle('floating', window.scrollY > 24); }
+  addEventListener('scroll', update, { passive: true });
+  update();
+})();
+
+// hamburger drawer (mobile nav)
+(function () {
+  var burger = document.querySelector('.nav-burger');
+  var drawer = document.querySelector('.nav-drawer');
+  var scrim = document.querySelector('.nav-scrim');
+  if (!burger || !drawer || !scrim) return;
+  function setOpen(open) {
+    drawer.classList.toggle('open', open);
+    scrim.classList.toggle('open', open);
+    burger.setAttribute('aria-expanded', String(open));
+    drawer.setAttribute('aria-hidden', String(!open));
+    document.documentElement.style.overflow = open ? 'hidden' : '';
+  }
+  burger.addEventListener('click', function () { setOpen(!drawer.classList.contains('open')); });
+  scrim.addEventListener('click', function () { setOpen(false); });
+  drawer.querySelector('.drawer-close').addEventListener('click', function () { setOpen(false); });
+  drawer.querySelectorAll('a[href^="#"]').forEach(function (a) {
+    a.addEventListener('click', function () { setOpen(false); });
+  });
+  addEventListener('keydown', function (e) { if (e.key === 'Escape') setOpen(false); });
+})();
+
+function copyAgentPrompt(btn) {
+  const text = document.getElementById('agent-prompt').innerText;
+  navigator.clipboard.writeText(text).then(() => {
+    if (!btn.dataset.label) btn.dataset.label = btn.textContent;
+    btn.textContent = 'Copied — paste into your agent';
+    btn.classList.add('done');
+    setTimeout(() => {
+      btn.textContent = btn.dataset.label;
+      btn.classList.remove('done');
+    }, 2200);
+  });
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,757 @@
+<!doctype html>
+<!--
+  convex-watchdog dashboard TEMPLATE — fork me, don't redesign me.
+
+  Everything on this page renders from the single `const DATA = {…}` block at the
+  top of the <script> (marked ══ DATA ══). To make this page live for any team:
+  regenerate ONLY that block from collected usage snapshots and leave the rest —
+  markup, styles, chart code — untouched. Chart scales, gridlines, month labels,
+  tier lines and crossings are all computed from DATA.
+
+  Spec: https://convex-doctor.fagner.ink/billing/llms.txt
+  The values shipped here are fictional sample data with realistic shapes.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Watchdog — Convex usage monitor</title>
+<meta name="description" content="Watchdog polls the Convex usage API, meters every included tier, and flags cost anomalies before the invoice does.">
+<meta name="theme-color" content="#281d1d">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='6' fill='%234fb014'/%3E%3C/svg%3E">
+<style>
+/* Watchdog — built on the Convex design system.
+   Warm paper, hairline borders, VCR mono numbers, racing stripes, zero shadows. */
+
+/* ── Fonts (served by convex-doctor.fagner.ink; system fallbacks below) ── */
+@font-face { font-family: "GT America"; font-weight: 400; font-display: swap; src: url(https://convex-doctor.fagner.ink/assets/fonts/GT-America-Standard-Regular.woff2) format("woff2"); }
+@font-face { font-family: "GT America"; font-weight: 500; font-display: swap; src: url(https://convex-doctor.fagner.ink/assets/fonts/GT-America-Standard-Medium.woff2) format("woff2"); }
+@font-face { font-family: "GT America"; font-weight: 700; font-display: swap; src: url(https://convex-doctor.fagner.ink/assets/fonts/GT-America-Standard-Bold.woff2) format("woff2"); }
+@font-face { font-family: "GT America"; font-weight: 900; font-display: swap; src: url(https://convex-doctor.fagner.ink/assets/fonts/GT-America-Standard-Black.woff2) format("woff2"); }
+@font-face { font-family: "VCR OSD Mono"; font-weight: 400; font-display: swap; src: url(https://convex-doctor.fagner.ink/assets/fonts/VCR-OSD-Mono.woff2) format("woff2"); }
+
+/* ── Tokens ────────────────────────────────────────────────────────── */
+:root {
+  color-scheme: light;
+  /* brand */
+  --color-red: #ee342f;
+  --color-yellow: #f3b01c;
+  --color-plum: #8d2676;
+  --color-green: #4fb014;
+  --color-n12: #141414;
+  /* surfaces */
+  --surface-cream: #f6eedb;
+  --surface-cream-raised: #faf4e9;
+  --surface-hero: #281d1d;
+  --surface-ink: #191919;
+  --surface-footer: #221f1d;
+  /* text */
+  --text-title: #141414;
+  --text-body: #292929;
+  --text-muted: #6d6d70;
+  --text-on-dark: var(--surface-cream);
+  --text-on-dark-muted: #a9a49a;
+  --border-light: rgba(20, 20, 20, 0.14);
+  --border-dark: rgba(246, 238, 219, 0.14);
+  /* status — bars use the bright brand hue, text uses the dark step */
+  --good: var(--color-green);      --good-text: #3d7a12;
+  --warn: var(--color-yellow);     --warn-text: #8f6400;
+  --serious: #de5d33;              --serious-text: #b4432a;
+  --crit: var(--color-red);        --crit-text: #c1271f;
+  --crit-on-dark: #f15d59;
+  /* categorical series (egress by source) — validated against the cream surface */
+  --viz-s1: #8d2676;
+  --viz-s2: #2a78d6;
+  --viz-s3: #1baf7a;
+  --viz-s4: #4a3aa7;
+  --viz-grid: rgba(20, 20, 20, 0.08);
+  /* type */
+  --font-display: "GT America", system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: "VCR OSD Mono", "Courier New", monospace;
+  --radius-sm: 6px; --radius-md: 8px; --radius-lg: 16px; --radius-pill: 999px;
+  --container-max: 1180px;
+}
+
+/* ── Base ──────────────────────────────────────────────────────────── */
+* { box-sizing: border-box; margin: 0; }
+body {
+  background: var(--surface-cream);
+  color: var(--text-body);
+  font-family: var(--font-display);
+  font-size: 14px; line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+a { color: #5a25b0; text-decoration: none; }
+a:hover { color: #711e5e; }
+.wrap { max-width: var(--container-max); margin: 0 auto; padding: 0 32px; }
+.num { font-family: var(--font-mono); letter-spacing: 0.01em; }
+
+/* MonoLabel */
+.mono-label {
+  display: inline-block; font-family: var(--font-mono);
+  font-size: 11px; letter-spacing: 0.05em; text-transform: uppercase;
+  padding: 4px 8px 3px; border-radius: 2px; line-height: 1.2;
+  border: 1px solid var(--border-light); color: var(--text-muted);
+  background: transparent; white-space: nowrap;
+}
+.mono-label.solid { background: var(--color-yellow); color: var(--color-n12); border-color: transparent; }
+.mono-label.danger { background: var(--color-red); color: var(--surface-cream); border-color: transparent; }
+.mono-label.plain { border: none; padding: 4px 0 3px; }
+
+/* Racing stripes */
+.stripes { display: flex; flex-direction: column; height: 9px; }
+.stripes > div { flex: 1; }
+.s-yellow { background: var(--color-yellow); }
+.s-red { background: var(--color-red); }
+.s-plum { background: var(--color-plum); }
+
+/* ── Masthead ──────────────────────────────────────────────────────── */
+header.mast { position: sticky; top: 0; z-index: 40; }
+.mast-bar { background: var(--surface-hero); color: var(--surface-cream); }
+.mast .bar { display: flex; align-items: center; gap: 20px; height: 58px; }
+.brand { display: flex; align-items: baseline; gap: 10px; white-space: nowrap; }
+.brand .dot {
+  width: 9px; height: 9px; border-radius: 50%; align-self: center;
+  background: var(--color-green); flex: none;
+  box-shadow: 0 0 0 3px rgba(79, 176, 20, 0.25);
+}
+.brand .name { font-weight: 700; font-size: 17px; letter-spacing: -0.01em; }
+.brand small {
+  font-family: var(--font-mono); font-weight: 400; font-size: 10px;
+  letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-on-dark-muted);
+}
+.pills { display: flex; gap: 8px; margin-left: 10px; }
+.pill {
+  font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.05em; text-transform: uppercase;
+  border: 1px solid var(--border-dark); border-radius: var(--radius-pill);
+  padding: 6px 14px 5px; color: var(--text-on-dark-muted);
+  background: none; cursor: pointer; line-height: 1.2;
+}
+.pill[aria-pressed="true"] { background: var(--color-yellow); border-color: var(--color-yellow); color: var(--color-n12); }
+.pill:disabled { opacity: 0.4; cursor: not-allowed; }
+.pill:focus-visible { outline: 2px solid var(--color-yellow); outline-offset: 2px; }
+.poll {
+  margin-left: auto; text-align: right;
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.05em;
+  text-transform: uppercase; color: var(--text-on-dark-muted); line-height: 1.8;
+}
+.poll b { color: var(--surface-cream); font-weight: 400; }
+
+/* ── Hero stats ────────────────────────────────────────────────────── */
+.hero-stats { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin: 28px 0 8px; }
+.card {
+  background: var(--surface-cream-raised);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md); padding: 20px 22px;
+}
+.card.ink { background: var(--surface-ink); border-color: transparent; color: var(--surface-cream); }
+.card.ink .mono-label { border-color: var(--border-dark); color: var(--text-on-dark-muted); }
+.stat-big { font-family: var(--font-mono); font-size: 42px; line-height: 1.1; margin-top: 12px; color: var(--text-title); }
+.card.ink .stat-big { color: var(--crit-on-dark); }
+.stat-sub { font-size: 12.5px; color: var(--text-muted); margin-top: 6px; }
+.card.ink .stat-sub { color: var(--text-on-dark-muted); }
+.stat-sub .num { font-size: 11.5px; }
+.monthbar { height: 8px; border-radius: 4px; background: rgba(20,20,20,0.1); margin-top: 16px; overflow: hidden; }
+.monthbar i { display: block; height: 100%; background: var(--color-n12); border-radius: 4px; }
+
+/* ── Sections ──────────────────────────────────────────────────────── */
+section { margin: 44px 0; }
+.eyebrow-row { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
+.eyebrow-row .hint { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-muted); }
+
+/* ── Meters ────────────────────────────────────────────────────────── */
+.meters { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; }
+.meter {
+  display: grid; grid-template-columns: 176px 1fr 190px; gap: 16px;
+  align-items: center; padding: 12px 16px;
+  background: var(--surface-cream-raised);
+  border: 1px solid var(--border-light); border-radius: var(--radius-md);
+}
+.meter .name { font-size: 13px; font-weight: 700; color: var(--text-title); }
+.meter .name small {
+  display: block; font-family: var(--font-mono); font-weight: 400;
+  font-size: 10px; letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--text-muted); margin-top: 3px;
+}
+.meter .flag { margin-left: 8px; font-size: 9px; padding: 3px 6px 2px; vertical-align: 2px; }
+.track { position: relative; height: 10px; background: rgba(20,20,20,0.09); border-radius: 5px; }
+.fill { position: absolute; inset: 0 auto 0 0; border-radius: 5px; background: var(--good); }
+.fill.warn { background: var(--warn); }
+.fill.over { background: var(--crit); }
+.projtick { position: absolute; top: -4px; bottom: -4px; width: 2px; background: var(--color-n12); border-radius: 1px; }
+.meter .stats { text-align: right; font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.02em; color: var(--text-muted); line-height: 1.7; }
+.meter .stats b { color: var(--text-title); font-weight: 400; }
+.meter .stats .cost-over { color: var(--crit-text); }
+.meter .stats .cost-zero { color: var(--good-text); }
+
+/* ── Two-column zone ───────────────────────────────────────────────── */
+.cols { display: grid; grid-template-columns: 392px 1fr; gap: 24px; align-items: start; }
+
+/* Anomaly feed */
+.feed { display: flex; flex-direction: column; gap: 12px; }
+.anom {
+  display: grid; grid-template-columns: 4px 1fr;
+  background: var(--surface-cream-raised);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md); overflow: hidden;
+}
+.anom .stripe { background: var(--text-muted); }
+.anom.crit .stripe { background: var(--crit); }
+.anom.serious .stripe { background: var(--serious); }
+.anom.warn .stripe { background: var(--warn); }
+.anom.info .stripe { background: #a1abbf; }
+.anom .body { padding: 13px 16px; }
+.anom .top { display: flex; align-items: baseline; gap: 8px; margin-bottom: 5px; }
+.sev { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; }
+.anom.crit .sev { color: var(--crit-text); }
+.anom.serious .sev { color: var(--serious-text); }
+.anom.warn .sev { color: var(--warn-text); }
+.anom.info .sev { color: var(--text-muted); }
+.anom .when { margin-left: auto; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted); }
+.anom .msg { font-size: 13.5px; font-weight: 700; color: var(--text-title); line-height: 1.4; }
+.anom .msg code { font-family: var(--font-mono); font-weight: 400; font-size: 12px; }
+.anom .why { font-size: 12.5px; color: var(--text-body); margin-top: 4px; }
+.anom .why .num { font-size: 11.5px; }
+.anom .why b { color: var(--text-title); }
+
+/* Charts */
+.chart-card { margin-bottom: 20px; }
+.chart-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 6px; flex-wrap: wrap; }
+.chart-head h3 { font-size: 15px; font-weight: 700; color: var(--text-title); }
+.chart-head .hint { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted); }
+.legend { display: flex; gap: 16px; flex-wrap: wrap; margin: 8px 0 4px; font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted); }
+.legend .key { display: inline-flex; align-items: center; gap: 6px; }
+.legend .sw { width: 10px; height: 10px; border-radius: 3px; }
+svg text { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.03em; fill: var(--text-muted); }
+svg .lbl { font-size: 10px; letter-spacing: 0.04em; text-transform: uppercase; }
+.tooltip {
+  position: fixed; pointer-events: none; z-index: 50;
+  background: var(--surface-cream-raised);
+  border: 1px solid rgba(20,20,20,0.3);
+  border-radius: var(--radius-sm); padding: 9px 12px; font-size: 12px;
+  display: none; min-width: 160px;
+}
+.tooltip .tt-title { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-title); margin-bottom: 6px; }
+.tooltip .row { display: flex; gap: 12px; justify-content: space-between; line-height: 1.7; }
+.tooltip .row .k { color: var(--text-muted); display: inline-flex; align-items: center; gap: 6px; }
+.tooltip .row .v { font-family: var(--font-mono); font-size: 11px; color: var(--text-title); }
+.tooltip .sw { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+
+/* ── Function table ────────────────────────────────────────────────── */
+.fx-wrap { border: 1px solid var(--border-light); border-radius: var(--radius-md); overflow-x: auto; background: var(--surface-cream-raised); }
+.fx { width: 100%; border-collapse: collapse; }
+.fx th {
+  text-align: right; font-family: var(--font-mono); font-weight: 400;
+  font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--text-muted); padding: 11px 16px;
+  border-bottom: 1px solid var(--border-light); white-space: nowrap;
+}
+.fx th:first-child, .fx td:first-child { text-align: left; }
+.fx td { padding: 9px 16px; border-bottom: 1px solid rgba(20,20,20,0.08); text-align: right; white-space: nowrap; font-size: 12px; }
+.fx tr:last-child td { border-bottom: none; }
+.fx tbody tr:hover { background: rgba(20,20,20,0.04); }
+.fx .fn { font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.01em; color: var(--text-title); }
+.fx .fn.sys { color: var(--text-muted); }
+.fx .num { font-size: 11.5px; color: var(--text-body); }
+.badge-new { margin-left: 10px; font-size: 9px; padding: 3px 6px 2px; vertical-align: 2px; }
+.dup { font-family: var(--font-mono); font-size: 11.5px; color: var(--crit-text); }
+.ddn { font-family: var(--font-mono); font-size: 11.5px; color: var(--good-text); }
+.dneutral { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-body); }
+.dash { color: var(--text-muted); }
+.spark { vertical-align: middle; }
+
+/* ── Footer ────────────────────────────────────────────────────────── */
+footer {
+  margin-top: 56px; background: var(--surface-footer); color: var(--text-on-dark-muted);
+  padding: 26px 0; font-family: var(--font-mono);
+  font-size: 10px; letter-spacing: 0.05em; text-transform: uppercase; line-height: 2;
+}
+footer .num { color: var(--surface-cream); }
+
+/* ── Responsive ────────────────────────────────────────────────────── */
+@media (max-width: 1020px) {
+  .cols, .meters, .hero-stats { grid-template-columns: 1fr; }
+  .meter { grid-template-columns: 150px 1fr 170px; }
+  .poll .line2 { display: none; }
+}
+@media (max-width: 640px) {
+  .wrap { padding: 0 18px; }
+  .pills { display: none; }
+  .meter { grid-template-columns: 1fr; gap: 8px; }
+  .meter .stats { text-align: left; }
+  .stat-big { font-size: 34px; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .fill, .monthbar i { transition: width 0.6s ease; }
+  .brand .dot { animation: pulse 2.4s ease-in-out infinite; }
+  @keyframes pulse {
+    0%, 100% { box-shadow: 0 0 0 3px rgba(79, 176, 20, 0.25); }
+    50% { box-shadow: 0 0 0 6px rgba(79, 176, 20, 0.12); }
+  }
+}
+</style>
+</head>
+<body>
+
+<header class="mast">
+  <div class="mast-bar">
+    <div class="wrap bar">
+      <div class="brand">
+        <span class="dot"></span>
+        <span class="name">Watchdog</span>
+        <small>convex usage monitor</small>
+      </div>
+      <nav class="pills" id="pills" aria-label="Scope"></nav>
+      <div class="poll" id="poll"></div>
+    </div>
+  </div>
+  <div class="stripes"><div class="s-yellow"></div><div class="s-red"></div><div class="s-plum"></div></div>
+</header>
+
+<div class="wrap">
+
+  <!-- hero stats -->
+  <div class="hero-stats" id="heroStats"></div>
+
+  <!-- meters -->
+  <section>
+    <div class="eyebrow-row">
+      <span class="mono-label">01 · Included-tier meters</span>
+      <span class="hint" id="metersHint"></span>
+    </div>
+    <div class="meters" id="meters"></div>
+  </section>
+
+  <!-- per-project attribution -->
+  <section>
+    <div class="eyebrow-row">
+      <span class="mono-label">02 · Who's eating the tiers</span>
+      <span class="hint" id="projHint"></span>
+    </div>
+    <div class="fx-wrap">
+      <table class="fx">
+        <thead>
+          <tr>
+            <th>Project</th><th style="text-align:left; width: 34%;">Share of DB I/O</th>
+            <th>DB I/O</th><th>Calls</th><th>Egress</th>
+          </tr>
+        </thead>
+        <tbody id="projBody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <div class="cols">
+    <!-- anomaly feed -->
+    <section style="margin-top: 0;">
+      <div class="eyebrow-row">
+        <span class="mono-label">03 · Anomaly feed</span>
+      </div>
+      <div class="feed" id="feed"></div>
+    </section>
+
+    <!-- charts -->
+    <section style="margin-top: 0;">
+      <div class="eyebrow-row">
+        <span class="mono-label">04 · Trajectories</span>
+      </div>
+
+      <div class="card chart-card">
+        <div class="chart-head"><h3>Database I/O — cumulative vs included tier</h3><span class="hint" id="cumHint"></span></div>
+        <div id="cumChart"></div>
+      </div>
+
+      <div class="card chart-card" style="margin-bottom: 0;">
+        <div class="chart-head"><h3>Data egress by source, daily</h3><span class="hint">GB / day</span></div>
+        <div class="legend" id="egLegend"></div>
+        <div id="egChart"></div>
+      </div>
+    </section>
+  </div>
+
+  <!-- function explorer -->
+  <section>
+    <div class="eyebrow-row">
+      <span class="mono-label">05 · Function explorer</span>
+      <span class="hint">Team-wide · top by database I/O · last 7 days</span>
+    </div>
+    <div class="fx-wrap">
+      <table class="fx">
+        <thead>
+          <tr>
+            <th>Function</th><th>Project</th><th>Calls</th><th>DB I/O</th><th>KB / call</th>
+            <th>Δ vs baseline</th><th>7-day</th>
+          </tr>
+        </thead>
+        <tbody id="fxBody"></tbody>
+      </table>
+    </div>
+  </section>
+</div>
+
+<footer>
+  <div class="wrap" id="footNote"></div>
+</footer>
+
+<div class="tooltip" id="tt"></div>
+
+<script>
+"use strict";
+const $ = (s) => document.querySelector(s);
+
+/* ══════════════════════════ DATA ══════════════════════════
+   The ONLY block a collector regenerates. Everything below the
+   ══ END DATA ══ marker renders from it — leave that alone.
+   Shipped values: FICTIONAL sample data with realistic shapes. */
+const DATA = {
+  team: { name: "acme", plan: "Pro", projectCount: 12 },
+  period: { month: "Jul", year: 2026, daysInMonth: 31, dayOfMonth: 21, billedDays: 20.6 },
+  poll: { last: "today 14:32", next: "1h 41m" },
+
+  hero: {
+    overageMtd: 50.48,
+    overageSub: "Database I/O $32.86 · Function calls $12.40 · Data egress $5.22",
+    projected: 109.16,
+    projectedSub: "Run-rate from 20.6 billed days · tiers are team-wide, not per project",
+  },
+
+  /* included-tier meters — one row per billable dimension */
+  meters: [
+    { name: "Database I/O",   unit: "GB",     used: 214.3, incl: 50,   proj: 322.4, cost: 54.48 },
+    { name: "Function calls", unit: "M",      used: 31.2,  incl: 25,   proj: 46.9,  cost: 43.80 },
+    { name: "Data egress",    unit: "GB",     used: 93.5,  incl: 50,   proj: 140.7, cost: 10.88 },
+    { name: "Action compute", unit: "GB-hr",  used: 41.2,  incl: 250,  proj: 62.0,  cost: 0 },
+    { name: "Database storage", unit: "GB",   used: 7.4,   incl: 50,   proj: 7.6,   cost: 0 },
+    { name: "File storage",   unit: "GB",     used: 22.8,  incl: 100,  proj: 23.1,  cost: 0 },
+    { name: "Search storage", unit: "GB",     used: 0.012, incl: 1,    proj: 0.012, cost: 0 },
+    { name: "Search queries", unit: "q-GB",   used: 0.3,   incl: 50000,proj: 0.5,   cost: 0, tiny: true },
+  ],
+
+  /* per-project attribution (dbIO GB, calls M, egress GB), largest first;
+     fold the tail into one row with rest: true */
+  projects: [
+    { name: "storefront",        io: 121.4, calls: 8.20,  eg: 31.1 },
+    { name: "media-pipeline",    io: 38.6,  calls: 2.10,  eg: 40.2 },
+    { name: "chat-support",      io: 27.9,  calls: 6.40,  eg: 8.8 },
+    { name: "analytics",         io: 14.2,  calls: 0.90,  eg: 1.2 },
+    { name: "ops-cron",          io: 2.1,   calls: 12.30, eg: 0.3 },
+    { name: "7 other projects",  io: 10.1,  calls: 1.30,  eg: 6.9, rest: true },
+  ],
+
+  /* anomaly feed, newest first — sev: crit | serious | warn | info;
+     msg/why may contain <code>/<b>/<span class="num"> markup */
+  anomalies: [
+    { sev: "crit", icon: "▲", label: "Spike in progress", when: "Today · 14:32",
+      msg: "Team DB I/O at 26.5 GB today — 2.8× the daily baseline",
+      why: "Baseline 9.4 GB/day (20-day median). Driver: <b>storefront</b>. At this rate the day adds ~<b class=\"num\">$5</b> alone." },
+    { sev: "crit", icon: "▲", label: "Critical", when: "Jul 6 · 03:00",
+      msg: "Team DB I/O crossed the 50 GB included tier on day 6",
+      why: "214 GB MTD, projected 322 GB → <b class=\"num\">$54.48</b>. <b>storefront</b> is 57% of it (121.4 GB)." },
+    { sev: "crit", icon: "▲", label: "Critical", when: "Jul 12 · 11:00",
+      msg: "Team data egress crossed the 50 GB included tier",
+      why: "Serving egress spiked 7.8 GB on Jul 9. Team-wide, serving (52.3 GB) now beats backups (31.2 GB) as the top egress source." },
+    { sev: "warn", icon: "◆", label: "Tier crossed", when: "Jul 17 · 19:00",
+      msg: "Function calls crossed the 25 M included tier",
+      why: "<code>ops-cron</code> contributes <b>12.3 M calls</b> (39%) — a project with almost no I/O, likely a hot cron. Projected 46.9 M → <b class=\"num\">$43.80</b>." },
+    { sev: "warn", icon: "◆", label: "New function", when: "Jul 14 · 12:00",
+      msg: "First calls from <code>reports.js:rebuildDailyRollup</code>",
+      why: "2,140 KB of DB I/O per call — <b>P99 of your fleet</b> (fleet median 5 KB). 612 calls so far → 1.31 GB. At 5k calls/mo this alone is 10.7 GB." },
+    { sev: "serious", icon: "●", label: "Cost shape change", when: "Jul 15 · 08:00",
+      msg: "<code>orders.js:listRecent</code> per-call cost jumped",
+      why: "312 KB/call this week vs 74 KB/call baseline (14-day median). Query may have stopped using an index after the Jul 14 deploy." },
+  ],
+
+  /* daily team DB I/O (GB), day 1 → today (last value may be a partial day) */
+  dbioDaily: [9.1,8.4,10.2,7.9,11.3,10.8,8.7,9.9,13.6,9.4,8.8,11.2,7.6,8.9,10.4,7.2,9.8,8.1,8.6,7.9,26.5],
+
+  /* daily egress stacked by source (GB); tags name + color the series */
+  egTags: [
+    { key: "serving",     color: "--viz-s1" },
+    { key: "cloudBackup", color: "--viz-s2" },
+    { key: "logStream",   color: "--viz-s3" },
+    { key: "fetch",       color: "--viz-s4" },
+  ],
+  egDaily: [
+    [2.1,1.38,0.42,0.11],[1.8,1.39,0.44,0.09],[3.2,1.41,0.40,0.12],[1.6,1.42,0.38,0.10],
+    [2.4,1.44,0.41,0.09],[2.9,1.45,0.36,0.11],[1.9,1.46,0.39,0.08],[2.2,1.47,0.35,0.10],
+    [7.8,1.48,0.37,0.12],[2.6,1.50,0.40,0.09],[3.1,1.51,0.38,0.10],[2.8,1.52,0.36,0.08],
+    [2.3,1.53,0.41,0.11],[1.7,1.54,0.39,0.09],[2.5,1.55,0.37,0.08],[3.0,1.56,0.35,0.10],
+    [1.5,1.57,0.40,0.09],[2.0,1.58,0.38,0.11],[1.8,1.59,0.36,0.08],[2.2,1.60,0.39,0.10],
+    [0.9,1.61,0.21,0.05],
+  ],
+
+  /* top functions, last 7 days — spark: 7 daily values; isNew flags first-seen */
+  fns: [
+    { fn: "orders.js:listRecent", proj: "storefront", calls: 412881, io: 24.10, kb: 58.4, d: 0.12,
+      spark: [3.1,3.3,3.2,3.5,3.4,3.8,4.4] },
+    { fn: "feed.js:timeline", proj: "storefront", calls: 88412, io: 18.30, kb: 207.0, d: 0.08,
+      spark: [2.4,2.5,2.6,2.5,2.5,2.7,2.9] },
+    { fn: "media.js:appendChunks", proj: "media-pipeline", calls: 51204, io: 14.90, kb: 291.0, d: 0.05,
+      spark: [2.0,2.1,2.1,2.0,2.1,2.2,2.2] },
+    { fn: "boards.js:activeView", proj: "chat-support", calls: 33150, io: 11.20, kb: 337.9, d: 0.31,
+      spark: [1.2,1.3,1.4,1.5,1.6,1.8,2.1] },
+    { fn: "_system_job/cloud_backup", proj: "media-pipeline", sys: true, calls: null, io: 3.10, kb: null, d: null,
+      spark: [0.43,0.44,0.44,0.45,0.44,0.45,0.46] },
+    { fn: "sessions.js:heartbeat", proj: "ops-cron", calls: 1204556, io: 2.90, kb: 2.4, d: 0.02,
+      spark: [0.41,0.40,0.42,0.41,0.41,0.42,0.42] },
+    { fn: "reports.js:rebuildDailyRollup", proj: "analytics", isNew: true, newLabel: "New Jul 14", calls: 612, io: 1.31, kb: 2140.2, d: null,
+      spark: [0,0.03,0.18,0.21,0.24,0.30,0.35] },
+    { fn: "search.js:suggest", proj: "storefront", calls: 41022, io: 1.10, kb: 26.8, d: -0.04,
+      spark: [0.17,0.16,0.16,0.15,0.16,0.15,0.15] },
+    { fn: "webhooks.js:ingest", proj: "media-pipeline", calls: 18394, io: 0.90, kb: 48.9, d: 0.06,
+      spark: [0.12,0.12,0.13,0.13,0.12,0.13,0.14] },
+  ],
+
+  footNote: 'Sample data · fictional team, realistic shapes · regenerated by the local collector on every poll. · Not affiliated with Convex, Inc.',
+};
+/* ═══════════════════════ END DATA ═══════════════════════ */
+
+/* ── derived ──────────────────────────────────────────────── */
+const P = DATA.period;
+const teamIO = DATA.projects.reduce((a, p) => a + p.io, 0);
+const tiersOver = DATA.meters.filter(m => m.used > m.incl).length;
+const monthSpan = `${P.month} 1–${P.dayOfMonth}`;
+
+/* round up to a pleasant axis ceiling (1/2/2.5/5 × 10^k) */
+function niceCeil(v) {
+  const pow = Math.pow(10, Math.floor(Math.log10(v)));
+  for (const m of [1, 2, 2.5, 5, 10]) if (m * pow >= v) return m * pow;
+  return 10 * pow;
+}
+
+/* ── masthead ─────────────────────────────────────────────── */
+$("#pills").innerHTML =
+  `<button class="pill" aria-pressed="true">Team · ${DATA.team.projectCount} projects</button>` +
+  DATA.projects.filter(p => !p.rest).slice(0, 2).map(p =>
+    `<button class="pill" disabled title="Drill-down — not wired yet">${p.name}</button>`).join("");
+$("#poll").innerHTML =
+  `<div>Last poll <b>${DATA.poll.last}</b> · next in <b>${DATA.poll.next}</b></div>
+   <div class="line2">Team <b>${DATA.team.name}</b> · ${DATA.team.plan} plan · billing ${P.month} 1–${P.daysInMonth}</div>`;
+
+/* ── hero stats ───────────────────────────────────────────── */
+$("#heroStats").innerHTML = `
+  <div class="card">
+    <span class="mono-label">Team overage · month to date</span>
+    <div class="stat-big">$${DATA.hero.overageMtd.toFixed(2)}</div>
+    <div class="stat-sub">${DATA.hero.overageSub}</div>
+  </div>
+  <div class="card ink">
+    <span class="mono-label">Projected month-end overage</span>
+    <div class="stat-big">$${DATA.hero.projected.toFixed(2)}</div>
+    <div class="stat-sub">${DATA.hero.projectedSub}</div>
+  </div>
+  <div class="card">
+    <span class="mono-label">Billing period</span>
+    <div class="stat-big">Day ${P.dayOfMonth}<span style="font-size: 18px; color: var(--text-muted);"> / ${P.daysInMonth}</span></div>
+    <div class="monthbar"><i style="width: ${(P.dayOfMonth / P.daysInMonth * 100).toFixed(0)}%"></i></div>
+    <div class="stat-sub">${tiersOver} of ${DATA.meters.length} dimensions past included tier</div>
+  </div>`;
+
+$("#metersHint").textContent = `Team · all ${DATA.team.projectCount} projects · ${monthSpan} · tick = projected month-end`;
+$("#projHint").textContent = `Per-project share · ${monthSpan} · bar = share of team DB I/O`;
+$("#cumHint").textContent = `GB · ${monthSpan} actual · dashed = projection`;
+
+/* ── meters ───────────────────────────────────────────────── */
+$("#meters").innerHTML = DATA.meters.map(m => {
+  const pctUsed = Math.min(100, m.used / m.incl * 100);
+  const pctProj = Math.min(100, m.proj / m.incl * 100);
+  const over = m.used > m.incl, warn = !over && m.proj > m.incl * 0.9;
+  const cls = over ? "over" : warn ? "warn" : "";
+  const flag = over ? '<span class="mono-label danger flag">Over</span>' : warn ? '<span class="mono-label solid flag">Near</span>' : "";
+  const fmt = (v) => m.tiny ? v.toLocaleString() : (v >= 100 ? v.toFixed(0) : v < 0.1 ? v.toFixed(3) : v.toFixed(1));
+  return `<div class="meter">
+    <div class="name">${m.name}${flag}<small>${fmt(m.incl)} ${m.unit} included</small></div>
+    <div class="track">
+      <div class="fill ${cls}" style="width:${pctUsed}%"></div>
+      <div class="projtick" style="left:${pctProj}%" title="projected month-end"></div>
+    </div>
+    <div class="stats">
+      <b>${fmt(m.used)}</b> / proj <b>${fmt(m.proj)}</b> ${m.unit}<br>
+      ${m.cost ? `<span class="cost-over">+$${m.cost.toFixed(2)}/mo</span>` : `<span class="cost-zero">$0</span>`}
+    </div>
+  </div>`;
+}).join("");
+
+/* ── per-project attribution ──────────────────────────────── */
+$("#projBody").innerHTML = DATA.projects.map(p => {
+  const pct = p.io / teamIO * 100;
+  return `<tr>
+    <td class="fn ${p.rest ? "sys" : ""}">${p.name}</td>
+    <td style="text-align:left;">
+      <div style="display:flex; align-items:center; gap:10px;">
+        <div style="flex:1; height:8px; background:rgba(20,20,20,0.09); border-radius:4px; overflow:hidden;">
+          <div style="width:${pct}%; height:100%; background:var(--color-plum); border-radius:4px;"></div>
+        </div>
+        <span class="num" style="width:38px; text-align:right;">${pct.toFixed(0)}%</span>
+      </div>
+    </td>
+    <td class="num">${p.io.toFixed(1)} GB</td>
+    <td class="num">${p.calls.toFixed(2)} M</td>
+    <td class="num">${p.eg.toFixed(1)} GB</td>
+  </tr>`;
+}).join("");
+
+/* ── anomaly feed ─────────────────────────────────────────── */
+$("#feed").innerHTML = DATA.anomalies.map(a => `
+  <div class="anom ${a.sev}">
+    <div class="stripe"></div>
+    <div class="body">
+      <div class="top"><span class="sev">${a.icon} ${a.label}</span><span class="when">${a.when}</span></div>
+      <div class="msg">${a.msg}</div>
+      <div class="why">${a.why}</div>
+    </div>
+  </div>`).join("");
+
+/* ── tooltip helpers ──────────────────────────────────────── */
+const tt = $("#tt");
+function showTT(html, x, y) {
+  tt.innerHTML = html; tt.style.display = "block";
+  const r = tt.getBoundingClientRect();
+  tt.style.left = Math.min(x + 14, innerWidth - r.width - 10) + "px";
+  tt.style.top  = Math.max(8, y - r.height - 12) + "px";
+}
+function hideTT() { tt.style.display = "none"; }
+
+/* ── cumulative DB I/O chart ──────────────────────────────── */
+(function cumChart() {
+  const W = 660, H = 250, L = 40, R = 56, T = 16, B = 26;
+  const days = P.daysInMonth;
+  const tierMeter = DATA.meters.find(m => m.name === "Database I/O");
+  const tier = tierMeter.incl, projEnd = tierMeter.proj;
+  const cum = []; let s = 0;
+  DATA.dbioDaily.forEach(v => { s += v; cum.push(s); });
+  const today = DATA.dbioDaily.length;
+  const rate = s / P.billedDays;
+  const proj = [];
+  for (let d = today + 1; d <= days; d++) proj.push(s + rate * (d - P.billedDays));
+  const maxY = niceCeil(Math.max(projEnd, s, tier) * 1.05);
+  const step = niceCeil(maxY / 5.5);
+  const x = (d) => L + (d - 1) / (days - 1) * (W - L - R);
+  const y = (v) => T + (1 - v / maxY) * (H - T - B);
+
+  let g = `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Cumulative database I/O versus the ${tier} gigabyte included tier">`;
+  for (let gy = 0; gy < maxY; gy += step)
+    g += `<line x1="${L}" x2="${W-R}" y1="${y(gy)}" y2="${y(gy)}" stroke="var(--viz-grid)" stroke-width="1"/>
+          <text x="${L-6}" y="${y(gy)+3.5}" text-anchor="end">${gy}</text>`;
+  for (const d of [1, 7, 14, 21, days].filter((d, i, a) => d <= days && a.indexOf(d) === i))
+    g += `<text x="${x(d)}" y="${H-6}" text-anchor="middle">${P.month} ${d}</text>`;
+  /* tier line */
+  g += `<line x1="${L}" x2="${W-R}" y1="${y(tier)}" y2="${y(tier)}" stroke="var(--crit)" stroke-width="1.5" stroke-dasharray="1 4" stroke-linecap="round"/>
+        <text class="lbl" x="${W-R}" y="${y(tier)-6}" text-anchor="end" fill="var(--crit-text)">tier ${tier} GB</text>`;
+  /* actual line + area */
+  const pts = cum.map((v, i) => `${x(i+1)},${y(v)}`).join(" ");
+  g += `<polygon points="${x(1)},${y(0)} ${pts} ${x(today)},${y(0)}" fill="var(--color-plum)" opacity="0.08"/>`;
+  g += `<polyline points="${pts}" fill="none" stroke="var(--color-plum)" stroke-width="2" stroke-linejoin="round"/>`;
+  /* projection */
+  if (proj.length) {
+    const ppts = [`${x(today)},${y(cum[today-1])}`].concat(proj.map((v, i) => `${x(today+1+i)},${y(v)}`)).join(" ");
+    g += `<polyline points="${ppts}" fill="none" stroke="var(--color-plum)" stroke-width="2" stroke-dasharray="3 5" stroke-linecap="round"/>`;
+  }
+  /* endpoints */
+  g += `<circle cx="${x(today)}" cy="${y(cum[today-1])}" r="4" fill="var(--color-plum)" stroke="var(--surface-cream-raised)" stroke-width="2"/>
+        <text class="lbl" x="${x(today)}" y="${y(cum[today-1])-9}" text-anchor="middle" fill="var(--text-title)">${Math.round(s)}</text>`;
+  if (proj.length)
+    g += `<circle cx="${x(days)}" cy="${y(proj[proj.length-1])}" r="4" fill="var(--surface-cream-raised)" stroke="var(--color-plum)" stroke-width="2"/>
+          <text class="lbl" x="${x(days)-7}" y="${y(proj[proj.length-1])+3}" text-anchor="end" fill="var(--text-muted)">proj ${Math.round(proj[proj.length-1])}</text>`;
+  /* crossing marker */
+  const crossIdx = cum.findIndex(v => v >= tier);
+  if (crossIdx >= 0) {
+    const cross = crossIdx + 1;
+    g += `<circle cx="${x(cross)}" cy="${y(tier)}" r="4.5" fill="var(--crit)" stroke="var(--surface-cream-raised)" stroke-width="2"/>
+          <text class="lbl" x="${x(cross)}" y="${y(tier)+18}" text-anchor="middle" fill="var(--crit-text)">crossed ${P.month} ${cross}</text>`;
+  }
+  g += `<line id="cumCross" y1="${T}" y2="${H-B}" stroke="rgba(20,20,20,0.25)" stroke-width="1" style="display:none"/>`;
+  g += `<rect x="${L}" y="${T}" width="${W-L-R}" height="${H-T-B}" fill="transparent" id="cumHit"/>`;
+  g += `</svg>`;
+  $("#cumChart").innerHTML = g;
+
+  const svg = $("#cumChart svg"), hit = $("#cumHit"), crossLine = $("#cumCross");
+  hit.addEventListener("pointermove", (e) => {
+    const box = svg.getBoundingClientRect();
+    const px = (e.clientX - box.left) / box.width * W;
+    const d = Math.max(1, Math.min(days, Math.round(1 + (px - L) / (W - L - R) * (days - 1))));
+    crossLine.setAttribute("x1", x(d)); crossLine.setAttribute("x2", x(d));
+    crossLine.style.display = "block";
+    const v = d <= today ? cum[d-1] : proj[d-today-1];
+    showTT(`<div class="tt-title">${P.month} ${d}${d > today ? " · projected" : ""}</div>
+      <div class="row"><span class="k">cumulative</span><span class="v">${v.toFixed(1)} GB</span></div>
+      <div class="row"><span class="k">vs tier</span><span class="v">${v >= tier ? "+" : ""}${(v - tier).toFixed(1)} GB</span></div>`,
+      e.clientX, e.clientY);
+  });
+  hit.addEventListener("pointerleave", () => { crossLine.style.display = "none"; hideTT(); });
+})();
+
+/* ── egress stacked bars ──────────────────────────────────── */
+(function egChart() {
+  const W = 660, H = 220, L = 40, R = 16, T = 12, B = 26;
+  const n = DATA.egDaily.length;
+  const maxTot = Math.max(...DATA.egDaily.map(d => d.reduce((a, b) => a + b, 0)));
+  const maxY = niceCeil(maxTot * 1.08);
+  const step = niceCeil(maxY / 4);
+  const bw = (W - L - R) / n;
+  const x = (i) => L + i * bw;
+  const y = (v) => T + (1 - v / maxY) * (H - T - B);
+
+  $("#egLegend").innerHTML = DATA.egTags.map(t =>
+    `<span class="key"><span class="sw" style="background:var(${t.color})"></span>${t.key}</span>`).join("");
+
+  let g = `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Daily data egress by source">`;
+  for (let gy = 0; gy < maxY; gy += step)
+    g += `<line x1="${L}" x2="${W-R}" y1="${y(gy)}" y2="${y(gy)}" stroke="var(--viz-grid)" stroke-width="1"/>
+          <text x="${L-6}" y="${y(gy)+3.5}" text-anchor="end">${gy}</text>`;
+  for (const d of [1, 7, 14, 21, 28].filter(d => d <= n))
+    g += `<text x="${x(d-1)+bw/2}" y="${H-6}" text-anchor="middle">${P.month} ${d}</text>`;
+
+  DATA.egDaily.forEach((day, i) => {
+    let acc = 0;
+    day.forEach((v, s) => {
+      const y1 = y(acc + v), h = y(acc) - y(acc + v) - 2; /* 2px surface gap between segments */
+      if (h > 0.5)
+        g += `<rect data-d="${i}" data-s="${s}" x="${x(i)+2}" y="${y1}" width="${bw-4}" height="${Math.max(0.8,h)}"
+               rx="${s === day.length-1 ? 2.5 : 0}" fill="var(${DATA.egTags[s].color})"/>`;
+      acc += v;
+    });
+  });
+  g += `</svg>`;
+  $("#egChart").innerHTML = g;
+
+  $("#egChart svg").addEventListener("pointermove", (e) => {
+    const r = e.target.closest("rect[data-d]");
+    if (!r) { hideTT(); return; }
+    const i = +r.dataset.d, day = DATA.egDaily[i], tot = day.reduce((a,b)=>a+b,0);
+    showTT(`<div class="tt-title">${P.month} ${i+1} · ${tot.toFixed(2)} GB</div>` +
+      day.map((v, s) => `<div class="row"><span class="k"><span class="sw" style="background:var(${DATA.egTags[s].color})"></span>${DATA.egTags[s].key}</span><span class="v">${v.toFixed(2)}</span></div>`).join(""),
+      e.clientX, e.clientY);
+  });
+  $("#egChart svg").addEventListener("pointerleave", hideTT);
+})();
+
+/* ── function table ───────────────────────────────────────── */
+$("#fxBody").innerHTML = DATA.fns.map(f => {
+  const max = Math.max(...f.spark) || 1;
+  const pts = f.spark.map((v, i) => `${4 + i * 10},${16 - (v / max) * 12}`).join(" ");
+  const color = f.isNew ? "var(--crit)" : "var(--color-plum)";
+  const spark = `<svg class="spark" width="70" height="18" aria-hidden="true">
+      <polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.6" stroke-linejoin="round"/>
+      <circle cx="${4 + 60}" cy="${16 - (f.spark[f.spark.length-1] / max) * 12}" r="2.4" fill="${color}"/>
+    </svg>`;
+  const delta = f.d == null ? '<span class="dash">—</span>'
+    : f.d > 0.5 ? `<span class="dup">▲ +${(f.d * 100).toFixed(0)}%</span>`
+    : f.d > 0   ? `<span class="dneutral">+${(f.d * 100).toFixed(0)}%</span>`
+    : `<span class="ddn">▼ ${(f.d * 100).toFixed(0)}%</span>`;
+  return `<tr>
+    <td class="fn ${f.sys ? "sys" : ""}">${f.fn}${f.isNew ? `<span class="mono-label danger badge-new">${f.newLabel || "New"}</span>` : ""}</td>
+    <td class="num" style="color: var(--text-muted);">${f.proj}</td>
+    <td class="num">${f.calls == null ? '<span class="dash">—</span>' : f.calls.toLocaleString()}</td>
+    <td class="num">${f.io.toFixed(2)} GB</td>
+    <td class="num">${f.kb == null ? '<span class="dash">—</span>' : f.kb >= 100 ? f.kb.toLocaleString() : f.kb.toFixed(1)}</td>
+    <td>${delta}</td>
+    <td>${spark}</td>
+  </tr>`;
+}).join("");
+
+/* ── footer ───────────────────────────────────────────────── */
+$("#footNote").innerHTML = DATA.footNote;
+</script>
+</body>
+</html>

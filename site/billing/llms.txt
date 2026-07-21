@@ -1,0 +1,179 @@
+# convex-watchdog — build spec for agents
+
+> You are reading the build spec for a **local Convex billing watchdog**: a dashboard +
+> collector that watches a Convex team's real usage (the same numbers Convex bills on),
+> attributes cost to projects and functions, detects anomalies, and projects the bill —
+> all running on the user's machine. Everything you need is in this file: auth, endpoints,
+> query IDs, column mappings, units, pricing, detection rules, and what to build.
+> Build it in whatever stack you're comfortable with; a single script + a static HTML
+> dashboard is enough. No server, no signup, no telemetry.
+
+This spec is maintained by convex-doctor (https://convex-doctor.fagner.ink). It is
+**not affiliated with Convex, Inc.** The API below is the one the official Convex
+dashboard itself uses ("Big Brain", api.convex.dev). It is undocumented and may change —
+the query IDs and column orders come from Convex's open-source dashboard
+(github.com/get-convex/convex-backend, npm-packages/dashboard/src/hooks/usageMetrics.ts).
+If a call starts failing, re-derive from that file.
+
+## Safety rules — read first, non-negotiable
+
+1. The access token in `~/.convex/config.json` is a **full-account credential**.
+   Send it to `https://api.convex.dev` and NOWHERE else. Never log it, never commit it,
+   never embed it in the generated dashboard HTML, never send it to any LLM API.
+2. Everything runs locally. Usage data is billing data — keep snapshots on disk,
+   gitignore them.
+3. Read-only: this watchdog only ever issues GET requests.
+
+## Auth
+
+- Token: `accessToken` field of `~/.convex/config.json` (written by `npx convex login`;
+  if the file is missing, ask the user to run that).
+- Every request needs BOTH headers:
+  - `Authorization: Bearer <accessToken>`
+  - `Origin: https://dashboard.convex.dev`  ← required; without it the API returns
+    400 "Header of type `origin` was missing".
+
+## Discovery endpoints
+
+- `GET https://api.convex.dev/api/dashboard/teams`
+  → `[{ id, name, slug, ... }]` — the user may be on several teams; default to the first
+  or let the user pick. **Billing is per team**, not per project: included tiers are
+  consumed by all projects combined.
+- `GET https://api.convex.dev/api/dashboard/teams/{teamId}/projects`
+  → `[{ id, name, slug, ... }]` — keep an id→name map; usage rows reference projects by id.
+
+## Usage queries
+
+One endpoint, parameterized by a Databricks query id:
+
+```
+GET https://api.convex.dev/api/dashboard/teams/{teamId}/usage/query
+    ?queryId=<uuid>
+    &from=YYYY-MM-DD          # inclusive; full history is available (no 30-day limit)
+    &to=YYYY-MM-DD            # inclusive; today's row updates intraday (~hourly)
+    &projectId=<id>           # optional; omit for team-wide rows
+```
+
+Responses are arrays of positional arrays; **every value is a string** — parse to
+numbers yourself. Column orders below are exact (teamId is always prepended as col 0).
+
+Units: `*_bytes` columns are raw bytes (divide by 1e9 for the GB Convex bills on);
+`*_gbs` compute columns are GB-seconds as float strings (÷ 3600 → GB-hours);
+call columns are plain counts.
+
+### The three queries that matter most
+
+`b63fe48d-320c-401a-8682-0a0b36b50e2b` — **summary** (one row per deployment class+region;
+this is the authoritative billed total — aggregate over rows):
+`[teamId, deploymentClass, region, databaseStorage_bytes, databaseIO_bytes,
+functionCalls, queryMutationCompute_gbs, actionComputeConvex_gbs, actionComputeNode_gbs,
+fileStorage_bytes, searchStorage_bytes, dataEgress_bytes, searchQueries_queryGb,
+actionComputeUser_gbs]`
+- class `s256` = prod-grade deployments (this is where the bill lives);
+  `s16` = dev deployments (usually negligible).
+- billed "action compute" = (actionComputeConvex + actionComputeNode + actionComputeUser) / 3600 GB-hr.
+- billed "database bandwidth / IO" is one number (the databaseIO column already sums
+  ingress+egress).
+
+`90ec3ee0-720f-4e67-94a2-75ecd278b3c6` — **functionBreakdown** (one row per function per
+deployment; this is your attribution + anomaly source):
+`[teamId, function, projectId, callCount, dbIngress_bytes, dbEgress_bytes,
+textSearch_bytes, vectorSearch_bytes, qmCompute_gbs, actionConvex_gbs, actionNode_gbs,
+dataEgress_bytes, deploymentName, componentPath]`
+- `function` looks like `messages.js:send`, or `_system_job/cloud_backup` for system work.
+- fetch with a short window (e.g. last 7 days, or per-day) to build per-function baselines.
+
+`67ce838f-b2d0-4cda-9a2e-580c6d134466` — **dataEgressByProject, daily**
+(explains "where did my bandwidth go" — includes egress invisible to any log stream):
+`[teamId, projectId, ds(YYYY-MM-DD), servingEgress_bytes, userFunctionEgress_bytes,
+cloudRestore_bytes, cloudBackup_bytes, snapshotExport_bytes, snapshotImport_bytes,
+fetchEgress_bytes, logStreamEgress_bytes, streamingExportEgress_bytes]`
+
+### Daily per-project time-series (for baselines & trend charts)
+
+- `9f606f77-521d-44bb-83ef-b1057b0fb1c9` databaseIOByProjectAndClass:
+  `[teamId, projectId, class, ds, ingress_bytes, egress_bytes]` (billed IO = sum of both)
+- `77a4e5bd-aa82-43e7-85a4-89897cecaa05` functionCallsByProjectAndClass:
+  `[teamId, projectId, class, ds, cachedQueries, uncachedQueries, mutations, actions, httpActions]`
+- `90c9d3b3-d93e-4583-a054-dbb2f9dad5a3` storageCallsByProjectAndClass:
+  `[teamId, projectId, class, ds, storageCalls]`
+  (the dashboard's "function calls" total = function calls + storage API calls —
+  reconcile against the summary query, which is authoritative)
+
+### More query ids (same endpoint, discover column order empirically if needed)
+
+databaseStorageByProjectAndClass `489b0f87-6b3a-4dfe-a327-f2965b5c2977` ·
+databaseStorageByTable `017c5977-3002-40ca-96af-31868e70e611` ·
+documentCountByTable `28646a64-f234-44c2-b763-ecb63d43ad24` ·
+documentCountByProject `2a5120a1-b334-4d99-b378-1028487c2202` ·
+computeByProject `45921934-b4a2-4c91-9ba2-8987fba6e8e3` ·
+computeByProjectSelfServe `038e5492-6de5-4ddb-86b4-761e19b4d2ab` ·
+fileStorageByProject `72add9df-4ef2-47fe-9942-194dfbb72088` ·
+searchStorageByProject `87f2b0b2-024c-4c2a-bf81-8a3c0cab1b82` ·
+searchQueriesByProject `48ae8bb1-ec17-41db-9e35-7c774296c5ac` ·
+deploymentCountByProject `0b6c9ab3-c17c-4ad5-bfca-8f0300e494f6` ·
+deploymentsByClassAndRegion `dfc73057-1948-4b99-a3bf-9ae802a395ee` ·
+deploymentCountByType `34801c2e-06a8-4cc5-8ecc-dd412b908763`
+
+## Gotchas learned the hard way
+
+- Log streams (Axiom etc.) are **lossy** (~5% steady, worse in bursts) and blind to
+  storage-API calls and cloud backups. This API is the billed truth; logs are not.
+- Cloud backups generate real, billed data egress (`cloudBackup` column) that appears
+  in no function log anywhere.
+- Today's rows update intraday, so polling every 2–3 hours catches a spike the same
+  day it starts — this is the whole point of the watchdog.
+- Dev deployments (`s16`) are usually ≈ 0; don't let them clutter attribution.
+- A team can have many projects; two or three usually dominate. Attribute before alarming.
+
+## Pricing (Convex Pro, as of mid-2026 — verify at convex.dev/pricing)
+
+Base: $25 per member/month. Included tiers are **per team**, pooled across all projects.
+
+| Resource            | Included   | Overage        |
+|---------------------|------------|----------------|
+| Function calls      | 25M/mo     | $2.00 per 1M   |
+| Action compute      | 250 GB-hr  | $0.30 per GB-hr|
+| Database bandwidth  | 50 GB/mo   | $0.20 per GB   |
+| Database storage    | 50 GB      | $0.20 per GB   |
+| File storage        | 100 GB     | $0.03 per GB   |
+| Data egress         | 50 GB/mo   | $0.12 per GB   |
+| Search storage      | 1 GB       | $0.50 per GB   |
+| Search queries      | 50k query-GB | $0.10 per 1k |
+
+Make the plan/tier table a config the user can edit (Starter-plan users have different,
+smaller included tiers and hard limits instead of overages).
+
+## What to build
+
+1. **Collector** — a script that: reads the token, discovers team + projects, pulls the
+   queries above (90-day backfill on first run, then month-to-date refresh), and stores
+   daily + per-function snapshots locally (SQLite or JSON files — your call). Make it
+   idempotent so a cron/launchd/scheduled run every 2–3 hours is safe.
+2. **Detection rules** — run after each collection, against a 14-day rolling baseline:
+   - **New function shipped**: a function name never seen before is suddenly a top
+     consumer. (This is the #1 real-world bill spike: new code, unindexed query.)
+   - **Cost-shape change**: a known function's bytes-per-call jumps ≥3× its median.
+   - **Volume anomaly**: a project's daily DB IO / calls / egress ≥3× its median
+     (require an absolute floor too, e.g. ≥1 GB, so quiet projects don't false-alarm).
+   - **Tier trajectory**: (MTD ÷ day-of-month × days-in-month) crosses an included tier
+     → report the crossing date and projected overage dollars.
+   - **Intraday spike**: today-so-far vs the same fraction of a typical day.
+3. **Dashboard** — do NOT design your own. Fork the reference dashboard:
+   download `https://convex-doctor.fagner.ink/billing/dashboard.html` and use it as-is.
+   The whole page renders from one `const DATA = {…}` block between the
+   `══ DATA ══` / `══ END DATA ══` markers — your collector regenerates ONLY that
+   block (rewrite the file, or serve the JSON and inject it); leave the markup,
+   styles, and chart code untouched. Chart scales, month labels, tier lines and
+   crossing markers are computed from DATA, so any team's numbers render correctly.
+   The block ships with sample data documenting every field's shape and units.
+   It contains, in order: hero (MTD + projected overage, billing day), included-tier
+   meters, per-project attribution, anomaly feed, cumulative DB IO + daily egress
+   charts, function explorer. Dollars everywhere — engineers ignore gigabytes but
+   act on dollars.
+4. **Alerts (optional)** — on any detection, POST to a user-supplied webhook
+   (Discord/Slack). Ask the user for the URL; skip silently if not configured.
+
+Suggested order: fetch + print the summary table first (prove auth works), then the
+collector + storage, then fork the dashboard template and wire it to real data,
+then rules, then scheduling + alerts.
