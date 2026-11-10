@@ -191,6 +191,9 @@ function renderIssue(
 
   // Message.
   for (const w of wrap(issue.message, 72)) lines.push(`     ${w}`);
+  if (issue.detail) {
+    for (const w of wrap(issue.detail, 72)) lines.push(`     ${paint("gray", w)}`);
+  }
 
   // Why.
   if (issue.why) {
@@ -568,6 +571,7 @@ export function reportOnlyJson(
     // Only when the selector spans codes (a category) — otherwise it's `rule.code`.
     ...(single ? {} : { code: i.code }),
     message: i.message,
+    ...(i.detail ? { detail: i.detail } : {}),
     ...((c) => (c ? { fixCode: c } : {}))(compactFix(i.fixCode)),
     pointer: {
       line: i.pointerLine ?? i.line,

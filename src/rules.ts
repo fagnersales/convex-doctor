@@ -119,6 +119,13 @@ export const RULE_META: Record<Issue["code"], RuleMeta> = {
     fixHint: "Set the field in the handler, or make it v.optional(...) in the validator.",
     docUrl: VALIDATION_DOC,
   },
+  REQUIRED_ANY_UNDEFINED: {
+    title: "Required v.any() field can receive undefined",
+    category: "nullability",
+    why: "v.any() accepts any Convex value, but undefined is not one: Convex drops object keys whose value is undefined, and a required v.any() field rejects the missing key. The call throws ReturnsValidationError (or ArgumentValidationError) every time the value is undefined. TypeScript doesn't catch it, because unknown, T | undefined and x?: T are all assignable to the any that Infer<typeof v.any()> produces.",
+    fixHint: "Wrap the field in v.optional(v.any()), or make sure the handler always sets a defined value.",
+    docUrl: VALIDATION_DOC,
+  },
   UNANALYZED: {
     title: "Return path couldn't be analyzed",
     category: "coverage",
@@ -303,6 +310,7 @@ export const AUTOFIX: Record<Issue["code"], AutofixCapability> = {
   CARDINALITY_MISMATCH: "guided",
   EXTRA_LITERAL_FIELD: "guided",
   MISSING_LITERAL_FIELD: "guided",
+  REQUIRED_ANY_UNDEFINED: "mechanical",
   // coverage — not a fix, a thing to verify by hand
   UNANALYZED: "manual",
   ANALYZER_ERROR: "manual",
