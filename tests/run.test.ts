@@ -862,3 +862,57 @@ describe("schemaless project (schema.ts is optional in Convex)", () => {
     expect(codes).not.toContain("TYPE_MISMATCH");
   });
 });
+
+describe("required v.any() fed undefined (REQUIRED_ANY_UNDEFINED)", () => {
+  const rau = (fixture: string, fn?: string) =>
+    go(fixture).issues.filter(
+      (i) => i.code === "REQUIRED_ANY_UNDEFINED" && (fn === undefined || i.function === fn),
+    );
+
+  test("flags the SpokPay rebase shape: union inside v.array fed `unknown`", () => {
+    const issues = rau("required-any-undefined", "plan");
+    expect(issues.map((i) => i.message).sort()).toEqual([
+      expect.stringContaining(`"changes[].baseValue" in returns`),
+      expect.stringContaining(`"changes[].templateValue" in returns`),
+    ]);
+    for (const i of issues) {
+      expect(i.severity).toBe("error");
+      expect(i.filePath).toEndWith("validators.ts");
+      expect(i.detail).toContain("unknown");
+      expect(i.fixCode?.after).toMatch(/^(baseValue|templateValue): v\.optional\(v\.any\(\)\)$/);
+      expect(i.docUrl).toBeDefined();
+    }
+  });
+
+  test("does not flag the union branch whose required v.any() gets a string", () => {
+    const issues = rau("required-any-undefined", "plan");
+    expect(issues.some((i) => i.message.includes("productName"))).toBe(false);
+  });
+
+  test("flags args a caller fills with `unknown` (ctx.runMutation)", () => {
+    const issues = rau("required-any-undefined", "apply");
+    expect(issues.map((i) => i.message).sort()).toEqual([
+      expect.stringContaining(`"changes[].baseValue" in args`),
+      expect.stringContaining(`"changes[].templateValue" in args`),
+    ]);
+    expect(issues[0]!.detail).toContain("Called from plans.ts:");
+  });
+
+  test("flags an optional property and a `T | undefined`", () => {
+    const issues = rau("required-any-undefined", "settings");
+    expect(issues.map((i) => [i.severity, i.message.match(/"(\w+)"/)![1]]).sort()).toEqual([
+      ["error", "extra"],
+      ["error", "label"],
+    ]);
+  });
+
+  test("an explicit `any` is a warning, not an error", () => {
+    const issues = rau("required-any-undefined", "parsed");
+    expect(issues).toHaveLength(1);
+    expect(issues[0]!.severity).toBe("warn");
+  });
+
+  test("concrete values, v.optional(v.any()) and a top-level v.any() stay clean", () => {
+    expect(go("required-any-clean").issues).toEqual([]);
+  });
+});

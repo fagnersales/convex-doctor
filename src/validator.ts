@@ -204,6 +204,7 @@ function locOf(prop: Node): FieldShape["loc"] {
     line: prop.getStartLineNumber(),
     column: prop.getStart() - prop.getStartLinePos(),
     text: prop.getText(),
+    file: prop.getSourceFile().getFilePath(),
   };
 }
 

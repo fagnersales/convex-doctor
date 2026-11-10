@@ -92,6 +92,7 @@ Your agent adds the field, ships the feature — and never touches the `returns`
 | `EXTRA_LITERAL_FIELD` | error | Handler literal returns a field the validator doesn't declare. |
 | `MISSING_LITERAL_FIELD` | error | Validator requires a field the handler literal never sets. |
 | `TYPE_MISMATCH` | error | Type categories disagree (primitive vs object, wrong `id<T>` table, wrong array element, paginated envelope, …). |
+| `REQUIRED_ANY_UNDEFINED` | error / warn | A required `v.any()` field in `returns` or `args` is fed a value that can be `undefined` (`unknown`, `T \| undefined`, `x?:`). Convex drops the key and the required field rejects it. Follows the value through helpers, variables and `Infer<>` annotations. **warn** when the value is an explicit `any` (`as any`, `JSON.parse`). Fix: `v.optional(v.any())`. |
 | `UNANALYZED` | info | Handler return too dynamic to trace. Off by default — `--include-unanalyzed`. |
 | `ANALYZER_ERROR` | error | The analyzer threw on one function; that function is skipped, the rest of the run is unaffected. |
 

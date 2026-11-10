@@ -8,6 +8,7 @@ import { buildGraph } from "./graph.ts";
 import { summarize } from "./report.ts";
 import { makeIssue } from "./rules.ts";
 import { lintProject } from "./lint.ts";
+import { checkRequiredAny } from "./anyUndefined.ts";
 import type {
   CallGraph,
   FunctionInfo,
@@ -31,7 +32,9 @@ export function run(opts: RunOptions): RunResult {
   const t0 = performance.now();
   const project = new Project({
     tsConfigFilePath: undefined,
-    compilerOptions: { allowJs: false, noEmit: true, target: 99 },
+    // strictNullChecks: REQUIRED_ANY_UNDEFINED reads `undefined` out of types,
+    // and without it `T | undefined` collapses to `T`.
+    compilerOptions: { allowJs: false, noEmit: true, target: 99, strictNullChecks: true },
     skipFileDependencyResolution: true,
     skipAddingFilesFromTsConfig: true,
   });
@@ -210,6 +213,33 @@ export function run(opts: RunOptions): RunResult {
         }),
       );
     }
+  }
+  try {
+    allIssues.push(
+      ...checkRequiredAny(
+        pending.map((p) => ({
+          filePath: p.sf.getFilePath(),
+          exportName: p.decl.getName(),
+          key: pendingKey(convexDir, p.sf.getFilePath(), p.decl.getName()),
+          returnsValidator: p.returnsValidator,
+          argsShape: p.argsShape,
+          handler: resolveHandlerFn(p.handlerNode),
+        })),
+        project,
+        convexDir,
+      ),
+    );
+  } catch (err) {
+    allIssues.push(
+      makeIssue("ANALYZER_ERROR", {
+        severity: "warn",
+        filePath: convexDir,
+        line: 0,
+        function: "<required-any>",
+        message: `REQUIRED_ANY_UNDEFINED pass threw and was skipped`,
+        detail: err instanceof Error ? err.message : String(err),
+      }),
+    );
   }
   const tAnalyze = performance.now();
 

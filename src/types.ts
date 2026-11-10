@@ -31,7 +31,7 @@ export interface FieldShape {
   optional: boolean;
   /** Source location of the field in the validator, for precise diagnostics.
    *  Captured when the shape comes from a parsed `v.object({...})` property. */
-  loc?: { line: number; column: number; text: string };
+  loc?: { line: number; column: number; text: string; file?: string };
 }
 
 export interface TableSchema {
@@ -112,6 +112,7 @@ export type IssueCode =
   | "CARDINALITY_MISMATCH"
   | "EXTRA_LITERAL_FIELD"
   | "MISSING_LITERAL_FIELD"
+  | "REQUIRED_ANY_UNDEFINED"
   | "UNANALYZED"
   /** The analyzer itself threw while processing one function — emitted so a
    *  single bad function never silently drops out of the report. */
